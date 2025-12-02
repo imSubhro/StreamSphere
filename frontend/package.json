@@ -1,0 +1,32 @@
+{
+    "name": "frontend",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint"
+    },
+    "dependencies": {
+        "@tailwindcss/postcss": "^4.1.17",
+        "autoprefixer": "^10.4.17",
+        "next": "latest",
+        "postcss": "^8.4.35",
+        "react": "latest",
+        "react-dom": "latest",
+        "socket.io-client": "latest",
+        "tailwindcss": "^3.4.1",
+        "uuid": "^13.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "latest",
+        "@types/react": "latest",
+        "@types/react-dom": "latest",
+        "@types/uuid": "^10.0.0",
+        "baseline-browser-mapping": "^2.8.32",
+        "eslint": "latest",
+        "eslint-config-next": "latest",
+        "typescript": "latest"
+    }
+}
