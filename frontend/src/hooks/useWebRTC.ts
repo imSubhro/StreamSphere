@@ -1,18 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-const STUN_SERVERS = {
-    iceServers: [
-        {
-            urls: [
-                "stun:stun.l.google.com:19302",
-                "stun:global.stun.twilio.com:3478",
-            ],
-        },
-    ],
-};
-
-export const useWebRTC = (roomId: string, isAuthorized: boolean) => {
+export const useWebRTC = (roomId: string, isAuthorized: boolean, token: string | null, guestName: string | null = null) => {
     const [socket, setSocket] = useState<Socket | null>(null);
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     const [peers, setPeers] = useState<Record<string, RTCPeerConnection>>({});
@@ -20,27 +9,48 @@ export const useWebRTC = (roomId: string, isAuthorized: boolean) => {
     const [isAudioEnabled, setIsAudioEnabled] = useState(true);
     const [isVideoEnabled, setIsVideoEnabled] = useState(true);
     const [peerMediaStates, setPeerMediaStates] = useState<Record<string, { video: boolean, audio: boolean }>>({});
+    const [iceServers, setIceServers] = useState<RTCIceServer[]>([
+        { urls: "stun:stun.l.google.com:19302" }
+    ]);
 
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const peersRef = useRef<Record<string, RTCPeerConnection>>({}); // Ref for mutable access
 
+    // Fetch ICE Servers
+    useEffect(() => {
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api'}/config/ice`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.iceServers) setIceServers(data.iceServers);
+            })
+            .catch(err => console.error('Failed to fetch ICE servers', err));
+    }, []);
+
     useEffect(() => {
         if (!isAuthorized) return;
 
-        // Initialize Socket
-        const newSocket = io('http://localhost:5002');
+        // Initialize Socket with Auth Token
+        const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5002', {
+            auth: { token, guestName }
+        });
         setSocket(newSocket);
 
         return () => {
             newSocket.disconnect();
         };
-    }, [isAuthorized]);
+    }, [isAuthorized, token]);
 
     useEffect(() => {
         if (!socket || !roomId || !isAuthorized) return;
 
         // Get User Media
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: true
+        })
             .then((stream) => {
                 setLocalStream(stream);
                 if (localVideoRef.current) {
@@ -124,10 +134,23 @@ export const useWebRTC = (roomId: string, isAuthorized: boolean) => {
     }, [socket, roomId]);
 
     const createPeerConnection = (targetId: string, stream: MediaStream, isInitiator: boolean) => {
-        const pc = new RTCPeerConnection(STUN_SERVERS);
+        const pc = new RTCPeerConnection({ iceServers });
 
-        // Add local tracks
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        // Add local tracks with Simulcast (ABR)
+        stream.getTracks().forEach(track => {
+            if (track.kind === 'video') {
+                pc.addTransceiver(track, {
+                    streams: [stream],
+                    sendEncodings: [
+                        { rid: 'q', maxBitrate: 100000, scaleResolutionDownBy: 4.0 }, // Low
+                        { rid: 'h', maxBitrate: 300000, scaleResolutionDownBy: 2.0 }, // Mid
+                        { rid: 'f', maxBitrate: 900000, scaleResolutionDownBy: 1.0 }  // High
+                    ]
+                });
+            } else {
+                pc.addTrack(track, stream);
+            }
+        });
 
         // Handle ICE candidates
         pc.onicecandidate = (event) => {

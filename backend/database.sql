@@ -1,0 +1,21 @@
+CREATE DATABASE streamsphere;
+
+\c streamsphere;
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    stream_key VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE streams (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    stream_key VARCHAR(255) UNIQUE NOT NULL,
+    is_live BOOLEAN DEFAULT FALSE,
+    title VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

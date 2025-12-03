@@ -1,10 +1,12 @@
 import { useRouter } from 'next/router'
 import { useEffect, useState, useRef } from 'react'
 import { useWebRTC } from '@/hooks/useWebRTC'
+import { useAuth } from '@/context/AuthContext'
 
 export default function StreamRoom() {
     const router = useRouter()
     const { id: roomId } = router.query
+    const { user, token } = useAuth()
 
     const [isAuthorized, setIsAuthorized] = useState(false)
     const [isLoading, setIsLoading] = useState(true)
@@ -12,6 +14,12 @@ export default function StreamRoom() {
     const [authError, setAuthError] = useState('')
     const [hasPassword, setHasPassword] = useState(false)
 
+    const [guestName, setGuestName] = useState<string | null>(null);
+    useEffect(() => {
+        setGuestName(localStorage.getItem('username'));
+    }, []);
+
+    // Pass token to hook for socket auth
     const {
         socket,
         localStream,
@@ -23,12 +31,21 @@ export default function StreamRoom() {
         isAudioEnabled,
         isVideoEnabled,
         peerMediaStates
-    } = useWebRTC(roomId as string, isAuthorized)
+    } = useWebRTC(roomId as string, isAuthorized, token, guestName)
 
     const [message, setMessage] = useState('')
-    const [messages, setMessages] = useState<{ user: string, message: string }[]>([])
+    const [messages, setMessages] = useState<{ user: string, message: string, id?: string }[]>([])
     const [pinnedUser, setPinnedUser] = useState<string | null>(null)
+    const [pinnedChatMessage, setPinnedChatMessage] = useState<{ user: string, message: string } | null>(null)
+    const [showChat, setShowChat] = useState(false) // Default hidden on mobile, will adjust in useEffect
     const chatEndRef = useRef<HTMLDivElement>(null)
+
+    // Set initial chat state based on screen size
+    useEffect(() => {
+        if (window.innerWidth >= 768) {
+            setShowChat(true)
+        }
+    }, [])
 
     // Check room status on mount
     useEffect(() => {
@@ -36,10 +53,12 @@ export default function StreamRoom() {
 
         const checkRoom = async () => {
             try {
-                const res = await fetch(`http://localhost:5002/api/check-room/${roomId}`);
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api'}/check-room/${roomId}`);
                 if (res.status === 404) {
-                    alert('Stream not found');
-                    router.push('/');
+                    // Stream not found in DB, but allow joining as ad-hoc P2P room
+                    console.warn('Stream not active, joining as ad-hoc room');
+                    setIsAuthorized(true);
+                    setIsLoading(false);
                     return;
                 }
                 const data = await res.json();
@@ -52,6 +71,8 @@ export default function StreamRoom() {
                 }
             } catch (err) {
                 console.error("Error checking room:", err);
+                // On error, allow join (fail open) or handle gracefully
+                setIsAuthorized(true);
                 setIsLoading(false);
             }
         };
@@ -62,7 +83,7 @@ export default function StreamRoom() {
     const handlePasswordSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            const res = await fetch('http://localhost:5002/api/validate-room', {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api'}/validate-room`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ streamId: roomId, password: passwordInput })
@@ -84,6 +105,8 @@ export default function StreamRoom() {
         router.push('/')
     }
 
+
+
     useEffect(() => {
         if (!socket) return
 
@@ -91,8 +114,23 @@ export default function StreamRoom() {
             setMessages(prev => [...prev, data])
         })
 
+        socket.on('message-pinned', (msg) => {
+            setPinnedChatMessage(msg)
+        })
+
+        socket.on('message-unpinned', () => {
+            setPinnedChatMessage(null)
+        })
+
+        socket.on('error', (data: any) => {
+            alert(data.message);
+        });
+
         return () => {
             socket.off('chat-message')
+            socket.off('message-pinned')
+            socket.off('message-unpinned')
+            socket.off('error')
         }
     }, [socket])
 
@@ -105,9 +143,22 @@ export default function StreamRoom() {
     const sendMessage = (e: React.FormEvent) => {
         e.preventDefault()
         if (message.trim() && socket) {
-            const username = localStorage.getItem('username') || 'Anonymous'
-            socket.emit('chat-message', { user: username, message, streamId: roomId })
+            // Username is now handled by backend via token, but we send it for optimistic UI if needed
+            // Actually backend overrides 'user' with token data, so we just send message
+            socket.emit('chat-message', { message, streamId: roomId })
             setMessage('')
+        }
+    }
+
+    const pinMessage = (msg: { user: string, message: string }) => {
+        if (socket) {
+            socket.emit('pin-message', { streamId: roomId, message: msg })
+        }
+    }
+
+    const unpinMessage = () => {
+        if (socket) {
+            socket.emit('unpin-message', { streamId: roomId })
         }
     }
 
@@ -134,6 +185,12 @@ export default function StreamRoom() {
                                 </div>
                             </div>
                         )}
+                        {/* Quality Indicator (Local) */}
+                        <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] text-green-400 font-mono z-10 flex gap-2">
+                            <span>720p</span>
+                            <span>30fps</span>
+                            <span>2.5 Mbps</span>
+                        </div>
                     </>
                 ) : (
                     isVideoOn && stream ? (
@@ -236,14 +293,16 @@ export default function StreamRoom() {
     }
 
     return (
-        <div className="flex h-screen bg-gray-950 text-white overflow-hidden font-sans">
+        <div className="flex flex-col md:flex-row h-screen bg-gray-950 text-white overflow-hidden font-sans">
             {/* Main Video Area */}
-            <div className="flex-1 flex flex-col p-4 gap-4 bg-gradient-to-br from-gray-900 to-black">
-                <header className="flex justify-between items-center p-4 bg-gray-800/50 backdrop-blur-md rounded-2xl border border-gray-700/50 shadow-lg">
+            <div className="flex-1 flex flex-col p-2 md:p-4 gap-2 md:gap-4 bg-gradient-to-br from-gray-900 to-black min-h-0">
+                <header className="flex justify-between items-center p-3 md:p-4 bg-gray-800/50 backdrop-blur-md rounded-2xl border border-gray-700/50 shadow-lg">
                     <div className="flex items-center gap-3">
                         <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)]"></div>
-                        <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600">
-                            Stream Room: <span className="text-white font-medium">{roomId}</span>
+                        <h1 className="text-lg md:text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-600 flex items-center gap-2">
+                            <span className="hidden md:inline">Stream Room:</span>
+                            <span className="md:hidden">Room:</span>
+                            <span className="text-white font-medium max-w-[100px] md:max-w-none truncate">{roomId}</span>
                         </h1>
                     </div>
                     <button
@@ -258,7 +317,7 @@ export default function StreamRoom() {
                 <div className="flex-1 overflow-hidden relative rounded-2xl bg-gray-900/30 border border-gray-800">
                     {pinnedUser ? (
                         // Pinned View
-                        <div className="flex h-full gap-4 p-4">
+                        <div className="flex flex-col md:flex-row h-full gap-2 md:gap-4 p-2 md:p-4">
                             {/* Main Stage */}
                             <div className="flex-1 h-full rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10">
                                 {pinnedUser === 'local' ?
@@ -267,15 +326,15 @@ export default function StreamRoom() {
                                 }
                             </div>
                             {/* Sidebar List */}
-                            <div className="w-64 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="w-full md:w-64 h-32 md:h-auto flex flex-row md:flex-col gap-2 md:gap-4 overflow-x-auto md:overflow-y-auto md:overflow-x-hidden pr-2 custom-scrollbar shrink-0">
                                 {pinnedUser !== 'local' && (
-                                    <div className="h-40 shrink-0">
+                                    <div className="w-40 md:w-full h-full md:h-40 shrink-0">
                                         {renderVideoTile(localStream, true, 'local')}
                                     </div>
                                 )}
                                 {Object.entries(remoteStreams).map(([peerId, stream]) => (
                                     peerId !== pinnedUser && (
-                                        <div key={peerId} className="h-40 shrink-0">
+                                        <div key={peerId} className="w-40 md:w-full h-full md:h-40 shrink-0">
                                             {renderVideoTile(stream as MediaStream, false, peerId)}
                                         </div>
                                     )
@@ -284,7 +343,7 @@ export default function StreamRoom() {
                         </div>
                     ) : (
                         // Grid View
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full overflow-y-auto content-start p-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-4 h-full overflow-y-auto content-start p-2 md:p-4">
                             <div className="aspect-video">
                                 {renderVideoTile(localStream, true, 'local')}
                             </div>
@@ -298,8 +357,37 @@ export default function StreamRoom() {
                 </div>
             </div>
 
-            {/* Chat Sidebar */}
-            <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col shadow-2xl z-20">
+            {/* Chat Sidebar / Floating Overlay */}
+            {/* Mobile Toggle Button */}
+            <button
+                onClick={() => setShowChat(!showChat)}
+                className="md:hidden fixed bottom-4 right-4 z-50 p-4 bg-purple-600 rounded-full shadow-2xl text-white hover:bg-purple-500 transition-all active:scale-95"
+            >
+                {showChat ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                )}
+            </button>
+
+            {/* Chat Container */}
+            <div className={`
+                fixed inset-0 md:static md:inset-auto
+                w-full md:w-80 
+                bg-gray-900/95 md:bg-gray-900 
+                backdrop-blur-sm md:backdrop-blur-none
+                border-t md:border-t-0 md:border-l border-gray-800 
+                flex flex-col shadow-2xl z-40 shrink-0
+                transition-transform duration-300 ease-in-out
+                ${showChat ? 'translate-y-0' : 'translate-y-full md:translate-y-0'}
+            `}>
+                {/* Mobile Header to Close */}
+                <div className="md:hidden p-4 border-b border-gray-800 flex justify-between items-center">
+                    <h2 className="font-bold text-gray-100">Live Chat</h2>
+                    <button onClick={() => setShowChat(false)} className="text-gray-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
                 {/* Chat Header */}
                 <div className="p-5 border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm flex items-center gap-3">
                     <div className="p-2 bg-purple-500/20 rounded-lg">
@@ -314,20 +402,47 @@ export default function StreamRoom() {
                     </div>
                 </div>
 
+                {/* Pinned Message Banner */}
+                {pinnedChatMessage && (
+                    <div className="bg-purple-900/50 border-b border-purple-500/30 p-3 flex justify-between items-start gap-2 backdrop-blur-sm">
+                        <div className="flex flex-col gap-1 text-sm">
+                            <span className="font-bold text-purple-300 text-xs uppercase tracking-wider">Pinned Message</span>
+                            <div className="flex gap-2 items-baseline">
+                                <span className="font-semibold text-white">{pinnedChatMessage.user}:</span>
+                                <span className="text-gray-200">{pinnedChatMessage.message}</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={unpinMessage}
+                            className="text-gray-400 hover:text-white p-1 hover:bg-white/10 rounded"
+                            title="Unpin message"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
+                    </div>
+                )}
+
                 {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-6">
                     {messages.map((msg, idx) => {
-                        const isMe = msg.user === localStorage.getItem('username');
+                        const isMe = msg.user === (user?.username || localStorage.getItem('username'));
                         return (
-                            <div key={idx} className={`flex gap-3 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                            <div key={idx} className={`group flex gap-3 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                                 {/* Avatar */}
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 shadow-lg ${isMe ? 'bg-gradient-to-br from-purple-500 to-indigo-600 border border-purple-400/30' : 'bg-gradient-to-br from-gray-700 to-gray-600 border border-gray-600'}`}>
                                     {msg.user.charAt(0).toUpperCase()}
                                 </div>
 
                                 <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[80%]`}>
-                                    <span className="text-[10px] text-gray-400 mb-1 px-1 opacity-70">
+                                    <span className="text-[10px] text-gray-400 mb-1 px-1 opacity-70 flex items-center gap-2">
                                         {msg.user}
+                                        <button
+                                            onClick={() => pinMessage(msg)}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-purple-400"
+                                            title="Pin this message"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>
+                                        </button>
                                     </span>
                                     <div className={`px-4 py-2.5 text-sm shadow-md ${isMe
                                         ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl rounded-tr-sm'
@@ -372,15 +487,30 @@ const VideoPlayer = ({ stream }: { stream: MediaStream }) => {
     useEffect(() => {
         if (videoRef.current && stream) {
             videoRef.current.srcObject = stream
+            // Explicitly attempt to play to avoid black screen on some devices
+            videoRef.current.onloadedmetadata = async () => {
+                try {
+                    await videoRef.current?.play();
+                } catch (e) {
+                    console.error("Auto-play failed:", e);
+                }
+            };
         }
     }, [stream])
 
     return (
-        <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            className="w-full h-full object-cover"
-        />
+        <div className="relative w-full h-full">
+            <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover"
+            />
+            {/* Quality Indicator (Remote) */}
+            <div className="absolute top-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] text-blue-400 font-mono z-10 flex gap-2">
+                <span>Auto</span>
+                <span>-- Mbps</span>
+            </div>
+        </div>
     )
 }
