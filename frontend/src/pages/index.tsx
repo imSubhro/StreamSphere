@@ -71,13 +71,22 @@ export default function Home() {
                 body: JSON.stringify({ password })
             })
             const data = await res.json()
-            if (data.streamKey) {
+
+            if (res.ok && data.streamKey) {
                 router.push(`/stream/${data.streamKey}`)
             } else if (data.error) {
-                alert(data.error)
+                // Check if token expired
+                if (data.error.includes('expired') || data.error.includes('Invalid token')) {
+                    alert('Your session has expired. Please login again.')
+                    logout()
+                    router.push('/login')
+                } else {
+                    alert(data.error)
+                }
             }
         } catch (err) {
-            alert('Failed to start stream')
+            console.error('Stream creation error:', err)
+            alert('Failed to start stream. Please try again.')
         }
     }
 

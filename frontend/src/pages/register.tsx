@@ -21,7 +21,17 @@ export default function Register() {
                 body: JSON.stringify({ username, email, password })
             });
 
-            const data = await res.json();
+            // Check if response is JSON
+            const contentType = res.headers.get('content-type');
+            let data;
+
+            if (contentType && contentType.includes('application/json')) {
+                data = await res.json();
+            } else {
+                // Handle non-JSON responses
+                const text = await res.text();
+                data = { error: text || 'An error occurred' };
+            }
 
             if (!res.ok) {
                 throw new Error(data.error || (data.errors ? data.errors[0].msg : 'Registration failed'));

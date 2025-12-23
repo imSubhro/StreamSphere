@@ -42,7 +42,7 @@ router.get('/me', authMiddleware, async (req, res) => {
         // In a real app, fetch user from DB to get latest info
         res.json(req.user);
     } catch (err) {
-        res.status(500).send('Server Error');
+        res.status(500).json({ error: 'Server Error', details: err.message });
     }
 });
 

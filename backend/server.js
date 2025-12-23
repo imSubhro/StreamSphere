@@ -41,6 +41,45 @@ app.use('/api', apiLimiter);
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 
+// Health Check Endpoint
+app.get('/api/health', async (req, res) => {
+    const health = {
+        server: 'OK',
+        timestamp: new Date().toISOString(),
+        database: 'NOT_CHECKED',
+        redis: 'NOT_CHECKED',
+        env: {
+            jwt_secret: !!process.env.JWT_SECRET,
+            jwt_refresh_secret: !!process.env.JWT_REFRESH_SECRET,
+            database_url: !!process.env.DATABASE_URL
+        }
+    };
+
+    // Check Database
+    try {
+        const db = require('./config/db');
+        await db.query('SELECT 1');
+        health.database = 'OK';
+    } catch (err) {
+        health.database = `ERROR: ${err.message}`;
+    }
+
+    // Check Redis
+    try {
+        if (redisClient.isOpen) {
+            await redisClient.ping();
+            health.redis = 'OK';
+        } else {
+            health.redis = 'DISCONNECTED';
+        }
+    } catch (err) {
+        health.redis = `ERROR: ${err.message}`;
+    }
+
+    const statusCode = (health.database === 'OK' && health.redis === 'OK') ? 200 : 503;
+    res.status(statusCode).json(health);
+});
+
 app.post('/api/stream', authMiddleware, streamLimiter, async (req, res) => {
   try {
       const userId = req.user.id;
@@ -64,7 +103,7 @@ app.post('/api/stream', authMiddleware, streamLimiter, async (req, res) => {
       res.json({ streamKey });
   } catch (err) {
       console.error(err);
-      res.status(500).send('Server Error');
+      res.status(500).json({ error: 'Server Error', details: err.message });
   }
 });
 
@@ -145,6 +184,11 @@ io.on('connection', (socket) => {
     if (pinnedMsg) {
         socket.emit('message-pinned', JSON.parse(pinnedMsg));
     }
+
+    // Update and broadcast viewer count
+    const room = io.sockets.adapter.rooms.get(streamId);
+    const viewerCount = room ? room.size : 0;
+    io.to(streamId).emit('viewer-count-update', viewerCount);
   });
 
   // Pin Message
@@ -171,7 +215,22 @@ io.on('connection', (socket) => {
         const isMuted = await redisClient.get(`muted:${data.streamId}:${socket.user.id}`);
         if (isMuted) return socket.emit('error', { message: 'You are muted.' });
 
-        // Rate limit removed
+        // Check slow mode
+        const slowModeDelay = await redisClient.get(`slowmode:${data.streamId}`);
+        if (slowModeDelay) {
+            const lastMessageTime = await redisClient.get(`lastmsg:${data.streamId}:${socket.user.id}`);
+            if (lastMessageTime) {
+                const timeSinceLastMessage = Date.now() - parseInt(lastMessageTime);
+                const delay = parseInt(slowModeDelay) * 1000; // Convert to milliseconds
+                
+                if (timeSinceLastMessage < delay) {
+                    const remainingTime = Math.ceil((delay - timeSinceLastMessage) / 1000);
+                    return socket.emit('error', { message: `Slow mode: Please wait ${remainingTime}s before sending another message.` });
+                }
+            }
+            // Update last message time
+            await redisClient.set(`lastmsg:${data.streamId}:${socket.user.id}`, Date.now().toString(), { EX: parseInt(slowModeDelay) + 5 });
+        }
         
         io.to(data.streamId).emit('chat-message', {
             message: data.message,
@@ -209,6 +268,23 @@ io.on('connection', (socket) => {
       }
   });
 
+  // Moderation: Toggle Slow Mode (Host Only)
+  socket.on('toggle-slow-mode', async (data) => { // { streamId, enabled, delay }
+      const streamData = await redisClient.hGet('active_streams', data.streamId);
+      if (!streamData) return;
+      const stream = JSON.parse(streamData);
+      
+      if (stream.hostId === socket.user.id) {
+          if (data.enabled && data.delay) {
+              await redisClient.set(`slowmode:${data.streamId}`, data.delay.toString());
+              io.to(data.streamId).emit('slow-mode-update', { enabled: true, delay: data.delay });
+          } else {
+              await redisClient.del(`slowmode:${data.streamId}`);
+              io.to(data.streamId).emit('slow-mode-update', { enabled: false, delay: 0 });
+          }
+      }
+  });
+
   socket.on('toggle-media', (data) => {
     socket.to(data.streamId).emit('user-toggled-media', {
       userId: socket.id,
@@ -217,11 +293,28 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Emoji Reactions
+  socket.on('send-reaction', (data) => { // { streamId, emoji }
+    io.to(data.streamId).emit('reaction', {
+      userId: socket.id,
+      username: socket.user.username,
+      emoji: data.emoji,
+      timestamp: Date.now()
+    });
+  });
+
   socket.on('disconnecting', async () => {
     const rooms = [...socket.rooms];
     rooms.forEach(async (room) => {
         if (room !== socket.id) {
             socket.to(room).emit('user-left', socket.id);
+            
+            // Update viewer count after user leaves
+            setTimeout(() => {
+                const roomData = io.sockets.adapter.rooms.get(room);
+                const viewerCount = roomData ? roomData.size : 0;
+                io.to(room).emit('viewer-count-update', viewerCount);
+            }, 100);
             
             // Check if this user is the host of the stream (room)
             try {

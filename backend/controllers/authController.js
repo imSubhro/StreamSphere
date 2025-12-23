@@ -63,7 +63,7 @@ exports.register = async (req, res) => {
     res.status(201).json({ user, accessToken, refreshToken });
   } catch (err) {
     console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(500).json({ error: 'Server Error', details: err.message });
   }
 };
 
@@ -105,7 +105,7 @@ exports.login = async (req, res) => {
     res.json({ user: { id: user.id, username: user.username, email: user.email, stream_key: streamKey }, accessToken, refreshToken });
   } catch (err) {
     console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(500).json({ error: 'Server Error', details: err.message });
   }
 };
 
@@ -134,6 +134,6 @@ exports.rotateStreamKey = async (req, res) => {
         res.json({ streamKey: newKey });
     } catch (err) {
         console.error(err.message);
-        res.status(500).send('Server Error');
+        res.status(500).json({ error: 'Server Error', details: err.message });
     }
 };

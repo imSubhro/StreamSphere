@@ -28,8 +28,10 @@ export default function StreamRoom() {
         stopStream,
         toggleAudio,
         toggleVideo,
+        toggleScreenShare,
         isAudioEnabled,
         isVideoEnabled,
+        isScreenSharing,
         peerMediaStates
     } = useWebRTC(roomId as string, isAuthorized, token, guestName)
 
@@ -39,6 +41,10 @@ export default function StreamRoom() {
     const [pinnedChatMessage, setPinnedChatMessage] = useState<{ user: string, message: string } | null>(null)
     const [showChat, setShowChat] = useState(false) // Default hidden on mobile, will adjust in useEffect
     const chatEndRef = useRef<HTMLDivElement>(null)
+
+    // New features state
+    const [viewerCount, setViewerCount] = useState(0)
+    const [reactions, setReactions] = useState<{ id: string, emoji: string, x: number }[]>([])
 
     // Set initial chat state based on screen size
     useEffect(() => {
@@ -126,11 +132,31 @@ export default function StreamRoom() {
             alert(data.message);
         });
 
+        // Viewer count updates
+        socket.on('viewer-count-update', (count: number) => {
+            setViewerCount(count);
+        });
+
+        // Emoji reactions
+        socket.on('reaction', (data: { emoji: string, userId: string }) => {
+            const reactionId = `${data.userId}-${Date.now()}`;
+            const randomX = Math.random() * 80 + 10; // Random position between 10% and 90%
+
+            setReactions(prev => [...prev, { id: reactionId, emoji: data.emoji, x: randomX }]);
+
+            // Remove reaction after animation (3 seconds)
+            setTimeout(() => {
+                setReactions(prev => prev.filter(r => r.id !== reactionId));
+            }, 3000);
+        });
+
         return () => {
             socket.off('chat-message')
             socket.off('message-pinned')
             socket.off('message-unpinned')
             socket.off('error')
+            socket.off('viewer-count-update')
+            socket.off('reaction')
         }
     }, [socket])
 
@@ -162,6 +188,12 @@ export default function StreamRoom() {
         }
     }
 
+    const sendReaction = (emoji: string) => {
+        if (socket) {
+            socket.emit('send-reaction', { streamId: roomId, emoji })
+        }
+    }
+
     // Helper to render a video tile
     const renderVideoTile = (stream: MediaStream | null, isLocal: boolean, peerId: string, isPinned: boolean = false) => {
         const isVideoOn = isLocal ? isVideoEnabled : (peerMediaStates[peerId]?.video !== false);
@@ -176,6 +208,11 @@ export default function StreamRoom() {
                             autoPlay
                             muted
                             playsInline
+                            onLoadedMetadata={(e) => {
+                                // Ensure video plays when metadata is loaded
+                                const video = e.currentTarget;
+                                video.play().catch(err => console.error('Local video play failed:', err));
+                            }}
                             className={`w-full h-full object-cover ${!isVideoOn ? 'hidden' : ''}`}
                         />
                         {!isVideoOn && (
@@ -250,6 +287,17 @@ export default function StreamRoom() {
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
                             )}
                         </button>
+                        <button
+                            onClick={toggleScreenShare}
+                            className={`p-3 rounded-full transition-colors ${isScreenSharing ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-700 hover:bg-gray-600'}`}
+                            title={isScreenSharing ? "Stop Screen Share" : "Share Screen"}
+                        >
+                            {isScreenSharing ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /><line x1="7" y1="8" x2="17" y2="16" /><line x1="17" y1="8" x2="7" y2="16" /></svg>
+                            ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
+                            )}
+                        </button>
                     </div>
                 )}
             </div>
@@ -304,6 +352,14 @@ export default function StreamRoom() {
                             <span className="md:hidden">Room:</span>
                             <span className="text-white font-medium max-w-[100px] md:max-w-none truncate">{roomId}</span>
                         </h1>
+                        {/* Viewer Count */}
+                        <div className="flex items-center gap-1.5 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-400">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                            <span className="text-sm font-semibold text-gray-300">{viewerCount}</span>
+                        </div>
                     </div>
                     <button
                         onClick={leaveRoom}
@@ -354,6 +410,36 @@ export default function StreamRoom() {
                             ))}
                         </div>
                     )}
+
+                    {/* Floating Emoji Reactions */}
+                    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                        {reactions.map((reaction) => (
+                            <div
+                                key={reaction.id}
+                                className="absolute bottom-0 animate-float-up"
+                                style={{
+                                    left: `${reaction.x}%`,
+                                    animationDuration: '3s'
+                                }}
+                            >
+                                <span className="text-4xl">{reaction.emoji}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Reaction Buttons - Mobile Responsive */}
+                    <div className="absolute bottom-2 md:bottom-4 left-2 md:left-4 flex gap-1.5 md:gap-2 z-20">
+                        {['❤️', '👍', '😂', '😮', '🔥'].map((emoji) => (
+                            <button
+                                key={emoji}
+                                onClick={() => sendReaction(emoji)}
+                                className="w-10 h-10 md:w-12 md:h-12 bg-gray-800/80 hover:bg-gray-700/80 backdrop-blur-sm rounded-full flex items-center justify-center text-xl md:text-2xl transition-all hover:scale-110 active:scale-95 border border-gray-700 shadow-lg"
+                                title={`Send ${emoji}`}
+                            >
+                                {emoji}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -485,17 +571,63 @@ const VideoPlayer = ({ stream }: { stream: MediaStream }) => {
     const videoRef = useRef<HTMLVideoElement>(null)
 
     useEffect(() => {
-        if (videoRef.current && stream) {
-            videoRef.current.srcObject = stream
-            // Explicitly attempt to play to avoid black screen on some devices
-            videoRef.current.onloadedmetadata = async () => {
-                try {
-                    await videoRef.current?.play();
-                } catch (e) {
-                    console.error("Auto-play failed:", e);
-                }
-            };
+        if (!videoRef.current || !stream) return;
+
+        const videoElement = videoRef.current;
+
+        // Check if stream has active video tracks
+        const videoTracks = stream.getVideoTracks();
+        if (videoTracks.length === 0) {
+            console.warn('No video tracks in stream');
+            return;
         }
+
+        // Set srcObject
+        videoElement.srcObject = stream;
+
+        // Explicitly attempt to play to avoid black screen on some devices
+        const playVideo = async () => {
+            try {
+                await videoElement.play();
+                console.log('Video playing successfully');
+            } catch (e) {
+                console.error("Auto-play failed:", e);
+                // Retry after a short delay
+                setTimeout(async () => {
+                    try {
+                        await videoElement.play();
+                    } catch (retryError) {
+                        console.error("Retry play failed:", retryError);
+                    }
+                }, 500);
+            }
+        };
+
+        videoElement.onloadedmetadata = playVideo;
+
+        // If metadata is already loaded, play immediately
+        if (videoElement.readyState >= 2) {
+            playVideo();
+        }
+
+        // Monitor track state
+        const handleTrackEnded = () => {
+            console.warn('Video track ended');
+        };
+
+        videoTracks.forEach(track => {
+            track.addEventListener('ended', handleTrackEnded);
+        });
+
+        // Cleanup
+        return () => {
+            videoTracks.forEach(track => {
+                track.removeEventListener('ended', handleTrackEnded);
+            });
+            if (videoElement.srcObject) {
+                videoElement.srcObject = null;
+            }
+        };
     }, [stream])
 
     return (
@@ -504,6 +636,7 @@ const VideoPlayer = ({ stream }: { stream: MediaStream }) => {
                 ref={videoRef}
                 autoPlay
                 playsInline
+                muted={false}
                 className="w-full h-full object-cover"
             />
             {/* Quality Indicator (Remote) */}
