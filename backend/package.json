@@ -5,7 +5,9 @@
     "main": "server.js",
     "scripts": {
         "start": "node server.js",
-        "dev": "nodemon server.js"
+        "start:prod": "node dist/server.js",
+        "dev": "nodemon server.js",
+        "build": "esbuild server.js --bundle --platform=node --outdir=dist --packages=external"
     },
     "keywords": [
         "express",
@@ -16,6 +18,7 @@
     "author": "",
     "license": "MIT",
     "dependencies": {
+        "@socket.io/redis-adapter": "^8.2.1",
         "bcryptjs": "^3.0.3",
         "cookie-parser": "^1.4.7",
         "cors": "^2.8.5",
@@ -27,10 +30,10 @@
         "pg": "^8.16.3",
         "rate-limiter-flexible": "^9.0.0",
         "redis": "^5.10.0",
-        "socket.io": "^4.6.1",
-        "@socket.io/redis-adapter": "^8.2.1"
+        "socket.io": "^4.6.1"
     },
     "devDependencies": {
+        "esbuild": "^0.27.2",
         "nodemon": "^3.0.1"
     }
 }
