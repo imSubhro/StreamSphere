@@ -1,0 +1,60 @@
+globalThis.__BUILD_MANIFEST = {
+  "pages": {
+    "/": [
+      "static/chunks/e799fa8a58d858f0.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/turbopack-c8c83290f5a0be8d.js"
+    ],
+    "/_app": [
+      "static/chunks/84f92be6b4dcb418.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/9b532711395ad5ae.css",
+      "static/chunks/turbopack-db156afc21cd8058.js"
+    ],
+    "/_error": [
+      "static/chunks/18833a13e077e958.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/turbopack-b7907e72632f15a1.js"
+    ],
+    "/dashboard": [
+      "static/chunks/2949614fe0614f9d.js",
+      "static/chunks/baf9c92df3a2f665.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/turbopack-64bfa462a83c8d08.js"
+    ],
+    "/login": [
+      "static/chunks/efc8fa2d9ee8bd04.js",
+      "static/chunks/baf9c92df3a2f665.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/turbopack-2ea5b486eba0360a.js"
+    ],
+    "/meeting/[code]": [
+      "static/chunks/a99531e75d27812d.js",
+      "static/chunks/baf9c92df3a2f665.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/cecec6fa380e1a1e.js",
+      "static/chunks/turbopack-271de4cd3fa8e63c.js"
+    ],
+    "/register": [
+      "static/chunks/a0c3b78f7d70f587.js",
+      "static/chunks/baf9c92df3a2f665.js",
+      "static/chunks/9836b3d05235c63e.js",
+      "static/chunks/d343b77f3f65a42e.js",
+      "static/chunks/turbopack-10ed28bb80d5d2ca.js"
+    ]
+  },
+  "devFiles": [],
+  "polyfillFiles": [],
+  "lowPriorityFiles": [],
+  "rootMainFiles": []
+};
+globalThis.__BUILD_MANIFEST.lowPriorityFiles = [
+"/static/" + process.env.__NEXT_BUILD_ID + "/_buildManifest.js",
+"/static/" + process.env.__NEXT_BUILD_ID + "/_ssgManifest.js"
+];

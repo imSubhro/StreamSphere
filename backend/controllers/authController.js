@@ -2,138 +2,126 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
-const crypto = require('crypto');
-const redisClient = require('../config/redis');
 
-const generateAccessToken = (user) => {
-  return jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '15m' });
-};
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
+const JWT_EXPIRY = '7d';
 
-const generateRefreshToken = (user) => {
-  return jwt.sign({ id: user.id, username: user.username }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
-};
-
-// Helper: Generate and Cache Stream Key
-const generateAndCacheStreamKey = async (userId) => {
-    const streamKey = crypto.randomBytes(20).toString('hex');
-    
-    // Update DB
-    await db.query('UPDATE users SET stream_key = $1 WHERE id = $2', [streamKey, userId]);
-    
-    // Cache in Redis (Expire in 24 hours)
-    await redisClient.set(`stream_key:${userId}`, streamKey, { EX: 24 * 60 * 60 });
-    
-    return streamKey;
-};
+function generateToken(payload) {
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+}
 
 exports.register = async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-
-  const { username, email, password } = req.body;
-
-  try {
-    // Check if user exists
-    const userCheck = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
-    if (userCheck.rows.length > 0) {
-      return res.status(400).json({ error: 'User already exists' });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const { username, email, password } = req.body;
 
-    // Insert user
-    const newUser = await db.query(
-      'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email',
-      [username, email, hashedPassword]
-    );
+    try {
+        // Check if user exists
+        const existing = await db.query(
+            'SELECT id FROM users WHERE email = $1 OR username = $2',
+            [email, username]
+        );
+        if (existing.rows.length > 0) {
+            return res.status(409).json({ error: 'User with this email or username already exists' });
+        }
 
-    const user = newUser.rows[0];
-    
-    // Generate Stream Key
-    const streamKey = await generateAndCacheStreamKey(user.id);
-    user.stream_key = streamKey;
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+        // Create user
+        const result = await db.query(
+            `INSERT INTO users (username, email, password_hash)
+             VALUES ($1, $2, $3)
+             RETURNING id, username, email, avatar_url, created_at`,
+            [username, email, passwordHash]
+        );
 
-    res.status(201).json({ user, accessToken, refreshToken });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Server Error', details: err.message });
-  }
+        const user = result.rows[0];
+        const token = generateToken({ id: user.id, username: user.username, email: user.email });
+
+        res.status(201).json({
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                avatarUrl: user.avatar_url,
+            },
+            token,
+        });
+    } catch (err) {
+        console.error('Registration error:', err.message);
+        res.status(500).json({ error: 'Failed to register user' });
+    }
 };
 
 exports.login = async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-
-  const { email, password } = req.body;
-
-  try {
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    
-    if (result.rows.length === 0) {
-      return res.status(400).json({ error: 'Invalid credentials' });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
     }
 
-    const user = result.rows[0];
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    const { email, password } = req.body;
 
-    if (!isMatch) {
-      return res.status(400).json({ error: 'Invalid credentials' });
+    try {
+        const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        const user = result.rows[0];
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        const token = generateToken({ id: user.id, username: user.username, email: user.email });
+
+        res.json({
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                avatarUrl: user.avatar_url,
+            },
+            token,
+        });
+    } catch (err) {
+        console.error('Login error:', err.message);
+        res.status(500).json({ error: 'Failed to login' });
     }
-
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    // Ensure stream key is in Redis on login (if missing)
-    let streamKey = user.stream_key;
-    if (!streamKey) {
-        streamKey = await generateAndCacheStreamKey(user.id);
-    } else {
-        // Refresh Redis TTL
-        await redisClient.set(`stream_key:${user.id}`, streamKey, { EX: 24 * 60 * 60 });
-    }
-    user.stream_key = streamKey;
-
-    res.json({ user: { id: user.id, username: user.username, email: user.email, stream_key: streamKey }, accessToken, refreshToken });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Server Error', details: err.message });
-  }
 };
 
-exports.refreshToken = async (req, res) => {
-  const { token } = req.body;
-
-  if (!token) return res.sendStatus(401);
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-    
-    // Ideally check if user still exists or if token is blacklisted
-    const user = { id: decoded.id, username: decoded.username };
-    const accessToken = generateAccessToken(user);
-
-    res.json({ accessToken });
-  } catch (err) {
-    return res.sendStatus(403);
-  }
-};
-
-exports.rotateStreamKey = async (req, res) => {
+exports.getCurrentUser = async (req, res) => {
     try {
         const userId = req.user.id;
-        const newKey = await generateAndCacheStreamKey(userId);
-        res.json({ streamKey: newKey });
+
+        const result = await db.query(
+            'SELECT id, username, email, avatar_url, created_at FROM users WHERE id = $1',
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = result.rows[0];
+        res.json({
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                avatarUrl: user.avatar_url,
+                createdAt: user.created_at,
+            },
+        });
     } catch (err) {
-        console.error(err.message);
-        res.status(500).json({ error: 'Server Error', details: err.message });
+        console.error('Get current user error:', err.message);
+        res.status(500).json({ error: 'Failed to get user' });
     }
 };

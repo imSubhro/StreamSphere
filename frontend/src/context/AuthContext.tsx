@@ -1,17 +1,11 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/router';
-
-interface User {
-    id: number;
-    username: string;
-    email: string;
-    stream_key?: string;
-}
+import { User } from '@/types/user';
 
 interface AuthContextType {
     user: User | null;
     token: string | null;
-    login: (token: string, refreshToken: string, user: User) => void;
+    login: (token: string, user: User) => void;
     logout: () => void;
     loading: boolean;
 }
@@ -25,28 +19,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const router = useRouter();
 
     useEffect(() => {
-        const storedToken = localStorage.getItem('accessToken');
+        const storedToken = localStorage.getItem('token');
         const storedUser = localStorage.getItem('user');
 
         if (storedToken && storedUser) {
             setToken(storedToken);
-            setUser(JSON.parse(storedUser));
+            try {
+                setUser(JSON.parse(storedUser));
+            } catch {
+                localStorage.removeItem('user');
+            }
         }
         setLoading(false);
     }, []);
 
-    const login = (accessToken: string, refreshToken: string, userData: User) => {
-        localStorage.setItem('accessToken', accessToken);
-        localStorage.setItem('refreshToken', refreshToken);
+    const login = (newToken: string, userData: User) => {
+        localStorage.setItem('token', newToken);
         localStorage.setItem('user', JSON.stringify(userData));
-        setToken(accessToken);
+        setToken(newToken);
         setUser(userData);
-        router.push('/');
+        router.push('/dashboard');
     };
 
     const logout = () => {
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('token');
         localStorage.removeItem('user');
         setToken(null);
         setUser(null);

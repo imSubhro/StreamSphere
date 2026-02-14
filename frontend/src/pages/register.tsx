@@ -1,118 +1,80 @@
-import { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { useState, FormEvent } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import { registerUser } from '@/lib/api';
 import Link from 'next/link';
-import Head from 'next/head';
 
-export default function Register() {
+export default function RegisterPage() {
+    const { login } = useAuth();
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
-    const { login } = useAuth();
+    const [isLoading, setIsLoading] = useState(false);
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setError('');
-
+        setIsLoading(true);
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api'}/auth/register`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, email, password })
-            });
-
-            // Check if response is JSON
-            const contentType = res.headers.get('content-type');
-            let data;
-
-            if (contentType && contentType.includes('application/json')) {
-                data = await res.json();
-            } else {
-                // Handle non-JSON responses
-                const text = await res.text();
-                data = { error: text || 'An error occurred' };
-            }
-
-            if (!res.ok) {
-                throw new Error(data.error || (data.errors ? data.errors[0].msg : 'Registration failed'));
-            }
-
-            login(data.accessToken, data.refreshToken, data.user);
+            const data = await registerUser({ username, email, password });
+            login(data.token, data.user);
         } catch (err: any) {
-            setError(err.message);
+            setError(err.response?.data?.error || err.response?.data?.errors?.[0]?.msg || 'Registration failed.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center p-4">
-            <Head>
-                <title>Register | StreamSphere</title>
-            </Head>
+        <div className="page-container">
+            <div className="aurora-bg" />
+            <div className="auth-wrapper">
+                <div className="glass-card auth-card slide-up">
+                    <div style={{ textAlign: 'center', marginBottom: 'clamp(24px, 5vw, 36px)' }}>
+                        <div className="nav-logo-icon" style={{
+                            width: 48, height: 48, margin: '0 auto 16px',
+                            fontSize: '1.3rem',
+                        }}>S</div>
+                        <h1 style={{ fontSize: 'clamp(1.3rem, 4vw, 1.6rem)', fontWeight: 700 }}>
+                            Create account
+                        </h1>
+                        <p style={{ color: 'var(--text-secondary)', marginTop: 8, fontSize: 'clamp(0.8rem, 2vw, 0.9rem)' }}>
+                            Join StreamSphere to start your meetings
+                        </p>
+                    </div>
 
-            <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-8 shadow-2xl">
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold mb-2">Create Account</h1>
-                    <p className="text-gray-400">Join the streaming community</p>
+                    {error && <div className="error-box">{error}</div>}
+
+                    <form onSubmit={handleSubmit}>
+                        <div className="form-group">
+                            <label className="input-label">Username</label>
+                            <input type="text" className="input-field" placeholder="johndoe"
+                                value={username} onChange={(e) => setUsername(e.target.value)} required autoComplete="username" />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="input-label">Email</label>
+                            <input type="email" className="input-field" placeholder="you@example.com"
+                                value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="input-label">Password</label>
+                            <input type="password" className="input-field" placeholder="Min 6 characters"
+                                value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} autoComplete="new-password" />
+                        </div>
+
+                        <button type="submit" className="btn-primary" disabled={isLoading}
+                            style={{ width: '100%' }}>
+                            {isLoading ? <span className="spinner" /> : 'Create Account'}
+                        </button>
+                    </form>
+
+                    <p className="auth-footer">
+                        Already have an account?{' '}
+                        <Link href="/login">Sign in</Link>
+                    </p>
                 </div>
-
-                {error && (
-                    <div className="bg-red-500/10 border border-red-500/50 text-red-500 p-3 rounded-lg mb-6 text-sm text-center">
-                        {error}
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Username</label>
-                        <input
-                            type="text"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition-colors"
-                            placeholder="StreamerName"
-                            required
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Email</label>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition-colors"
-                            placeholder="you@example.com"
-                            required
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Password</label>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition-colors"
-                            placeholder="••••••••"
-                            required
-                            minLength={6}
-                        />
-                    </div>
-
-                    <button
-                        type="submit"
-                        className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold transition-all shadow-lg shadow-purple-600/25"
-                    >
-                        Sign Up
-                    </button>
-                </form>
-
-                <p className="mt-6 text-center text-gray-400 text-sm">
-                    Already have an account?{' '}
-                    <Link href="/login" className="text-purple-400 hover:text-purple-300 font-medium">
-                        Sign in
-                    </Link>
-                </p>
             </div>
         </div>
     );

@@ -13,8 +13,8 @@ pool.on('connect', () => {
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  console.error('Unexpected error on idle client', err.message);
+  // Don't crash the server — log and let it try to reconnect
 });
 
 module.exports = {
