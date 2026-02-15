@@ -26,7 +26,7 @@ export default function RegisterPage() {
     };
 
     return (
-        <div className="page-container">
+        <div className="page-container" suppressHydrationWarning>
             <div className="aurora-bg" />
             <div className="auth-wrapper">
                 <div className="glass-card auth-card slide-up">
