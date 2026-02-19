@@ -19,24 +19,54 @@ const { errorHandler } = require('./middleware/errorHandler');
 const app = express();
 const server = http.createServer(app);
 
-// CORS origins
-const allowedOrigins = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    process.env.FRONTEND_URL || 'https://streamsphere-iota.vercel.app',
-].filter(Boolean);
+// Dynamic CORS configuration
+const getAllowedOrigins = () => {
+    const origins = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ];
+    
+    // Add FRONTEND_URL from env (can be comma-separated for multiple)
+    if (process.env.FRONTEND_URL) {
+        process.env.FRONTEND_URL.split(',').forEach(url => {
+            origins.push(url.trim());
+        });
+    }
+    
+    return origins.filter(Boolean);
+};
+
+// CORS callback for dynamic origin checking
+const corsCallback = (origin, callback) => {
+    const allowedOrigins = getAllowedOrigins();
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Allow if origin matches or if it's a Vercel preview deployment
+    if (allowedOrigins.includes(origin) || 
+        origin.endsWith('.vercel.app') || 
+        origin.endsWith('.netlify.app')) {
+        return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+};
+
+console.log('CORS allowed origins:', getAllowedOrigins());
 
 // Socket.IO setup
 const io = new Server(server, {
     cors: {
-        origin: allowedOrigins,
+        origin: corsCallback,
         methods: ['GET', 'POST'],
+        credentials: true,
     },
 });
 
 // Express Middleware
 app.use(cors({
-    origin: allowedOrigins,
+    origin: corsCallback,
     credentials: true
 }));
 app.use(express.json());
