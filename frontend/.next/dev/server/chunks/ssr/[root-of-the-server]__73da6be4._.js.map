@@ -1,6 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 40, "column": 0}, "map": {"version":3,"sources":["file:///S:/playground/stream/frontend/src/pages/_document.tsx"],"sourcesContent":["import { Html, Head, Main, NextScript } from 'next/document'\r\n\r\nexport default function Document() {\r\n    return (\r\n        <Html lang=\"en\">\r\n            <Head>\r\n                <link\r\n                    rel=\"stylesheet\"\r\n                    href=\"https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0&display=swap\"\r\n                />\r\n            </Head>\r\n            <body>\r\n                <Main />\r\n                <NextScript />\r\n            </body>\r\n        </Html>\r\n    )\r\n}\r\n"],"names":[],"mappings":";;;;;AAAA;;;AAEe,SAAS;IACpB,qBACI,qKAAC,iIAAI;QAAC,MAAK;;0BACP,qKAAC,iIAAI;0BACD,cAAA,qKAAC;oBACG,KAAI;oBACJ,MAAK;;;;;;;;;;;0BAGb,qKAAC;;kCACG,qKAAC,iIAAI;;;;;kCACL,qKAAC,uIAAU;;;;;;;;;;;;;;;;;AAI3B"}}]
-}
