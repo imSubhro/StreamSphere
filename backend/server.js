@@ -19,17 +19,24 @@ const { errorHandler } = require('./middleware/errorHandler');
 const app = express();
 const server = http.createServer(app);
 
+// CORS origins
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    process.env.FRONTEND_URL || 'https://streamsphere-iota.vercel.app',
+].filter(Boolean);
+
 // Socket.IO setup
 const io = new Server(server, {
     cors: {
-        origin: process.env.FRONTEND_URL || 'https://streamsphere-iota.vercel.app',
+        origin: allowedOrigins,
         methods: ['GET', 'POST'],
     },
 });
 
 // Express Middleware
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'https://streamsphere-iota.vercel.app',
+    origin: allowedOrigins,
     credentials: true
 }));
 app.use(express.json());
