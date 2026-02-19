@@ -1,131 +1,109 @@
-# 📺 LiveStream + Chat Platform
+# 🎬 StreamSphere
 
-A full-stack project where users can **start live streams** and others can **watch via a unique stream ID**. Viewers can also participate in a **real-time general chat**. Built with **Next.js (frontend)**, **WebRTC (P2P Mesh)**, and **WebSockets (chat + signaling)**, with an **Express.js backend**.
+A modern, real-time video conferencing and live streaming platform built with **Next.js**, **WebRTC**, and **Socket.IO**. Start meetings, share your screen, and chat with participants — all with low-latency peer-to-peer connections.
+
+[![Live Demo](https://img.shields.io/badge/Demo-streamsphere--iota.vercel.app-blue?style=for-the-badge)](https://streamsphere-iota.vercel.app)
 
 ---
 
-## 🚀 Features
+## ✨ Features
 
-* 🔴 Start a live stream (with camera + mic).
-* 👀 Watch streams by unique link/ID.
-* 💬 Real-time chat for each stream.
-* � Optional password protection for streams.
-* 🛡️ Stream keys to prevent hijacking.
-* ⚡ Low-latency P2P streaming.
+| Feature | Description |
+|---------|-------------|
+| 🎥 **Video Meetings** | Create or join meetings with unique room codes |
+| 🔴 **Live Streaming** | Start streams with camera + mic, viewers join via link |
+| 💬 **Real-time Chat** | Instant messaging within meeting rooms |
+| 🔒 **Authentication** | Secure JWT-based user accounts |
+| 🖥️ **Screen Sharing** | Share your screen with participants |
+| 🎛️ **Media Controls** | Mute/unmute audio, toggle video on/off |
+| ⚡ **Low Latency** | P2P WebRTC connections for minimal delay |
+| 🌐 **Responsive** | Works on desktop and mobile browsers |
 
 ---
 
 ## 🛠️ Tech Stack
 
-### Frontend
+**Frontend**
+- Next.js 16 + TypeScript
+- TailwindCSS
+- WebRTC API
+- Socket.IO Client
 
-* [Next.js](https://nextjs.org/) – React-based framework.
-* [TailwindCSS](https://tailwindcss.com/) – Styling.
-* WebRTC API – Handle live video/audio (P2P Mesh).
-* WebSocket client – Real-time chat + signaling.
-
-### Backend
-
-* [Express.js](https://expressjs.com/) – Node.js API + signaling.
-* [Socket.IO](https://socket.io/) – WebSocket communication.
-* In-Memory Storage – Temporary storage for active streams and passwords.
-
-### Security
-
-* Unique stream keys.
-* Password protection for rooms.
-* HTTPS + WSS (secure traffic).
+**Backend**
+- Express.js + Node.js
+- Socket.IO (signaling + chat)
+- PostgreSQL (Supabase)
+- JWT Authentication
 
 ---
 
-## 📂 Project Structure
+## 🚀 Quick Start
 
-```
-StreamSphere/
-├── backend/               # Express.js backend
-│   ├── server.js          # Express entrypoint
-│   ├── package.json       # Node.js dependencies
-│   └── ...
-├── frontend/              # Next.js frontend
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── index.tsx      # Landing page
-│   │   │   ├── stream/[id].tsx # Stream room page
-│   │   ├── components/        # Reusable UI components
-│   └── ...
-├── README.md              # Documentation
-└── ...
-```
+### Prerequisites
+- Node.js 18+
+- PostgreSQL database (or Supabase account)
 
----
-
-## 🏁 Getting Started
-
-### 1️⃣ Clone the Repository
+### 1. Clone & Install
 
 ```bash
-git clone https://github.com/yourusername/StreamSphere.git
+git clone https://github.com/imSubhro/StreamSphere.git
 cd StreamSphere
+
+# Install backend
+cd backend && npm install
+
+# Install frontend
+cd ../frontend && npm install
 ```
 
-### 2️⃣ Setup Backend (Express)
+### 2. Configure Environment
+
+**Backend** (`backend/.env`):
+```env
+DATABASE_URL= 
+JWT_SECRET=
+FRONTEND_URL= 
+PORT=
+```
+
+**Frontend** (`frontend/.env.local`):
+```env
+NEXT_PUBLIC_API_URL=http://localhost:5000/api
+NEXT_PUBLIC_SOCKET_URL=http://localhost:5000
+```
+
+### 3. Run Development Servers
 
 ```bash
-cd backend
-npm install
-npm start
+# Terminal 1 - Backend
+cd backend && npm start
+
+# Terminal 2 - Frontend
+cd frontend && npm run dev
 ```
-
-Backend will run on: `http://localhost:5002`
-
-### 3️⃣ Setup Frontend (Next.js)
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend will run on: `http://localhost:3000`
 
 ---
 
 ## 🔧 How It Works
 
-### 🎥 Live Streaming (WebRTC P2P)
+### Video/Audio Streaming
+1. User clicks **Create Meeting** → generates unique room code
+2. Browser captures camera/mic via `getUserMedia()`
+3. WebRTC peer connections established between participants
+4. Signaling (offers/answers/ICE candidates) handled via Socket.IO
 
-1. Streamer clicks **Start Stream**.
-2. Browser uses `getUserMedia()` to capture camera/mic.
-3. WebRTC connections are established directly between Streamer and Viewers (Mesh topology).
-4. Signaling (offers/answers/candidates) is handled via Socket.IO.
+### Real-time Chat
+1. Users join a meeting room
+2. Socket.IO connection established
+3. Messages broadcast to all room participants instantly
 
-### 💬 Real-time Chat (WebSocket)
-
-1. Viewer joins a stream room.
-2. Client connects to WebSocket (`wss://...`).
-3. Messages are broadcast to everyone in that room.
-
----
-
-## �️ Roadmap (Planned Features)
-
-* [x] **Database**: PostgreSQL (Supabase) for persistent user/stream data.
-* [x] **Authentication**: JWT for secure user accounts.
-* [x] **Scaling**: Redis for WebSocket scaling.
-* [x] **Video Quality**: Simulcast (ABR) for adaptive bitrate streaming.
-* [ ] **Media Server**: Switch from P2P Mesh to SFU (MediaSoup/LiveKit) for better scalability with many viewers.
-* [ ] **Rate Limiting**: Add protection against spam.
 
 ---
 
-## 🤝 Contributing
+## 📄 License
 
-Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
-
----
-
-## 📜 License
-
-MIT License – feel free to use and modify.
+MIT License — free to use and modify.
 
 ---
+
+**made with ❤️ by [Subhro](https://github.com/imSubhro)**
