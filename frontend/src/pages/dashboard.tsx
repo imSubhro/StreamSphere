@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '@/context/AuthContext';
 import { createMeeting, listMeetings } from '@/lib/api';
@@ -12,6 +12,22 @@ export default function DashboardPage() {
     const [creating, setCreating] = useState(false);
     const [loadingMeetings, setLoadingMeetings] = useState(true);
     const [fetchError, setFetchError] = useState('');
+    const [profileOpen, setProfileOpen] = useState(false);
+    const profileRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!loading && !user) router.replace('/login');
+    }, [user, loading, router]);
+
+    useEffect(() => {
+        const onClickOutside = (e: MouseEvent) => {
+            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+                setProfileOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', onClickOutside);
+        return () => document.removeEventListener('mousedown', onClickOutside);
+    }, []);
 
     useEffect(() => {
         if (!loading && !user) router.replace('/login');
@@ -77,16 +93,29 @@ export default function DashboardPage() {
                     <span className="nav-logo-text">StreamSphere</span>
                 </div>
                 <div className="nav-actions">
-                    <span style={{
-                        color: 'var(--text-secondary)',
-                        fontSize: 'clamp(0.75rem, 2vw, 0.9rem)',
-                        display: 'none',
-                    }} className="username-desktop">
-                        👋 {user.username}
-                    </span>
-                    <button onClick={logout} className="btn-secondary" style={{ padding: '8px 16px', minHeight: 40, fontSize: '0.85rem' }}>
-                        Sign Out
-                    </button>
+                    <div className="profile-menu" ref={profileRef}>
+                        <button
+                            className="profile-avatar"
+                            onClick={() => setProfileOpen((v) => !v)}
+                            aria-label="Account menu"
+                            title={user.email}
+                        >
+                            {user.username.charAt(0).toUpperCase()}
+                        </button>
+                        {profileOpen && (
+                            <div className="profile-dropdown">
+                                <div className="profile-dropdown-header">
+                                    <span className="profile-dropdown-name">{user.username}</span>
+                                    <span className="profile-dropdown-email">{user.email}</span>
+                                </div>
+                                <div className="profile-dropdown-divider" />
+                                <button className="profile-dropdown-item danger" onClick={logout}>
+                                    <span className="icon icon-sm">logout</span>
+                                    Sign Out
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </nav>
 
