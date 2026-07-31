@@ -22,7 +22,12 @@ function initializeMeetingSocket(io) {
 
             // Tell new user about existing participants
             const existing = Array.from(roomParticipants[roomId]).filter(id => id !== socket.id);
-            socket.emit('existing-participants', { participants: existing });
+            socket.emit('existing-participants', {
+                participants: existing.map(id => {
+                    const info = io.sockets.sockets.get(id)?.userData || {};
+                    return { socketId: id, userName: info.userName, userId: info.userId };
+                }),
+            });
 
             // Tell others about new user
             socket.to(roomId).emit('user-joined', {
@@ -38,7 +43,7 @@ function initializeMeetingSocket(io) {
 
         // WebRTC signaling
         socket.on('offer', ({ offer, to, userName }) => {
-            io.to(to).emit('offer', { offer, from: socket.id, userName });
+            io.to(to).emit('offer', { offer, from: socket.id, userName, userId: socket.user?.id });
         });
 
         socket.on('answer', ({ answer, to }) => {
@@ -55,6 +60,14 @@ function initializeMeetingSocket(io) {
                 socketId: socket.id,
                 type,
                 enabled,
+            });
+        });
+
+        // Screen share state notifications
+        socket.on('share-screen', ({ roomId, sharing }) => {
+            socket.to(roomId).emit('user-shared-screen', {
+                socketId: socket.id,
+                sharing,
             });
         });
 

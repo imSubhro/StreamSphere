@@ -1,10 +1,12 @@
 import { useState, FormEvent } from 'react';
+import { useRouter } from 'next/router';
 import { useAuth } from '@/context/AuthContext';
 import { loginUser } from '@/lib/api';
 import Link from 'next/link';
 
 export default function LoginPage() {
     const { login } = useAuth();
+    const router = useRouter();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -16,7 +18,8 @@ export default function LoginPage() {
         setIsLoading(true);
         try {
             const data = await loginUser({ email, password });
-            login(data.token, data.user);
+            const redirect = typeof router.query.redirect === 'string' ? router.query.redirect : undefined;
+            login(data.token, data.user, redirect);
         } catch (err: any) {
             setError(err.response?.data?.error || 'Login failed. Please try again.');
         } finally {

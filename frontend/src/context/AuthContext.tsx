@@ -5,7 +5,7 @@ import { User } from '@/types/user';
 interface AuthContextType {
     user: User | null;
     token: string | null;
-    login: (token: string, user: User) => void;
+    login: (token: string, user: User, redirect?: string) => void;
     logout: () => void;
     loading: boolean;
 }
@@ -33,12 +33,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setLoading(false);
     }, []);
 
-    const login = (newToken: string, userData: User) => {
+    const login = (newToken: string, userData: User, redirect?: string) => {
         localStorage.setItem('token', newToken);
         localStorage.setItem('user', JSON.stringify(userData));
         setToken(newToken);
         setUser(userData);
-        router.push('/dashboard');
+        router.push(redirect || '/dashboard');
     };
 
     const logout = () => {

@@ -12,11 +12,13 @@ import { ChatMessage, PersistedChatMessage } from '@/types/meeting';
 
 interface RemotePeer {
     socketId: string;
+    userId?: string;
     userName: string;
     stream: MediaStream | null;
     pc: RTCPeerConnection;
     audioEnabled: boolean;
     videoEnabled: boolean;
+    screenSharing: boolean;
 }
 
 interface Reaction {
@@ -52,6 +54,9 @@ export default function MeetingRoom() {
     const [audioEnabled, setAudioEnabled] = useState(true);
     const [videoEnabled, setVideoEnabled] = useState(true);
     const [chatOpen, setChatOpen] = useState(false);
+    const [peopleOpen, setPeopleOpen] = useState(false);
+    const [reactionOpen, setReactionOpen] = useState(false);
+    const [hostId, setHostId] = useState<string | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [participantCount, setParticipantCount] = useState(1);
@@ -71,6 +76,17 @@ export default function MeetingRoom() {
     const peersRef = useRef<Map<string, RemotePeer>>(new Map());
     const localStreamRef = useRef<MediaStream | null>(null);
     const meetingCode = typeof code === 'string' ? code : '';
+    // Keep the current user in a ref so the connection effect never restarts
+    // when the context object identity changes (prevents meeting reconnects).
+    const userRef = useRef(user);
+    userRef.current = user;
+
+    // Redirect unauthenticated visitors to login, then back to this meeting
+    useEffect(() => {
+        if (!loading && !user && meetingCode) {
+            router.replace(`/login?redirect=${encodeURIComponent(`/meeting/${meetingCode}`)}`);
+        }
+    }, [user, loading, meetingCode, router]);
 
     // Scroll chat to bottom
     useEffect(() => {
@@ -123,13 +139,17 @@ export default function MeetingRoom() {
 
     // Main connection logic
     useEffect(() => {
-        if (!meetingCode || !user || loading) return;
+        const u = userRef.current;
+        if (!meetingCode || !u || loading) return;
         let isMounted = true;
 
         async function init() {
             try {
                 const data = await getMeeting(meetingCode);
-                if (data.meeting) setMeetingTitle(data.meeting.title || '');
+                if (data.meeting) {
+                    setMeetingTitle(data.meeting.title || '');
+                    setHostId(data.meeting.host?.id || null);
+                }
             } catch { /* meeting might not exist yet */ }
 
             try { await joinMeetingAPI(meetingCode); } catch { /* DB might be down */ }
@@ -167,7 +187,7 @@ export default function MeetingRoom() {
 
             const emitJoin = () => {
                 socket.emit('join-room', {
-                    roomId: meetingCode, userId: user!.id, userName: user!.username,
+                    roomId: meetingCode, userId: u!.id, userName: u!.username,
                 });
             };
 
@@ -175,37 +195,38 @@ export default function MeetingRoom() {
             if (socket.connected) { setIsConnected(true); emitJoin(); }
 
             socket.on('existing-participants', ({ participants }) => {
-                participants.forEach(async (socketId: string) => {
+                participants.forEach(async ({ socketId, userName, userId }: { socketId: string; userName?: string; userId?: string }) => {
                     const callbacks = makePeerCallbacks();
                     const pc = createPeerConnection(socketId, callbacks);
                     addStreamToPeer(pc, localStreamRef.current!);
-                    const peer: RemotePeer = { socketId, userName: '', stream: null, pc, audioEnabled: true, videoEnabled: true };
+                    const peer: RemotePeer = { socketId, userId, userName: userName || '', stream: null, pc, audioEnabled: true, videoEnabled: true, screenSharing: false };
                     peersRef.current.set(socketId, peer);
                     setRemotePeers(new Map(peersRef.current));
                     const offer = await createOffer(pc);
-                    socket.emit('offer', { offer, to: socketId, userName: user!.username });
+                    socket.emit('offer', { offer, to: socketId, userName: u!.username });
                 });
             });
 
-            socket.on('user-joined', ({ socketId, userName }) => {
+            socket.on('user-joined', ({ socketId, userName, userId }) => {
                 const callbacks = makePeerCallbacks();
                 const pc = createPeerConnection(socketId, callbacks);
                 addStreamToPeer(pc, localStreamRef.current!);
-                const peer: RemotePeer = { socketId, userName, stream: null, pc, audioEnabled: true, videoEnabled: true };
+                const peer: RemotePeer = { socketId, userId, userName, stream: null, pc, audioEnabled: true, videoEnabled: true, screenSharing: false };
                 peersRef.current.set(socketId, peer);
                 setRemotePeers(new Map(peersRef.current));
             });
 
-            socket.on('offer', async ({ offer, from, userName }) => {
+            socket.on('offer', async ({ offer, from, userName, userId }) => {
                 let peer = peersRef.current.get(from);
                 if (!peer) {
                     const callbacks = makePeerCallbacks();
                     const pc = createPeerConnection(from, callbacks);
                     addStreamToPeer(pc, localStreamRef.current!);
-                    peer = { socketId: from, userName, stream: null, pc, audioEnabled: true, videoEnabled: true };
+                    peer = { socketId: from, userId, userName, stream: null, pc, audioEnabled: true, videoEnabled: true, screenSharing: false };
                     peersRef.current.set(from, peer);
                 }
                 if (userName) peer.userName = userName;
+                if (userId) peer.userId = userId;
                 const answer = await handleOffer(peer.pc, offer);
                 socket.emit('answer', { answer, to: from });
                 setRemotePeers(new Map(peersRef.current));
@@ -247,6 +268,17 @@ export default function MeetingRoom() {
                 });
             });
 
+            // Remote user screen share state
+            socket.on('user-shared-screen', ({ socketId, sharing }) => {
+                setRemotePeers(prev => {
+                    const peer = prev.get(socketId);
+                    if (!peer) return prev;
+                    const next = new Map(prev);
+                    next.set(socketId, { ...peer, screenSharing: sharing });
+                    return next;
+                });
+            });
+
             // Emoji reactions
             socket.on('reaction', ({ emoji, userName }) => {
                 const id = Date.now() + Math.random();
@@ -273,13 +305,14 @@ export default function MeetingRoom() {
             socket.off('ice-candidate'); socket.off('user-left');
             socket.off('participant-count'); socket.off('new-message');
             socket.off('user-toggled-media'); socket.off('reaction');
+            socket.off('user-shared-screen');
             peersRef.current.forEach(p => p.pc.close());
             peersRef.current.clear();
             if (localStreamRef.current) stopMediaStream(localStreamRef.current);
             leaveMeetingAPI(meetingCode).catch(() => { });
             disconnectSocket();
         };
-    }, [meetingCode, user, loading, makePeerCallbacks]);
+    }, [meetingCode, loading, makePeerCallbacks]);
 
     // Toggle audio/video
     const handleToggleAudio = () => {
@@ -312,6 +345,7 @@ export default function MeetingRoom() {
                 if (sender && videoTrack) sender.replaceTrack(videoTrack);
             });
             setScreenSharing(false);
+            getSocket().emit('share-screen', { roomId: meetingCode, sharing: false });
         } else {
             try {
                 const screen = await getScreenStream();
@@ -324,6 +358,7 @@ export default function MeetingRoom() {
                 videoTrack.onended = () => handleScreenShare();
                 setLocalStream(screen); localStreamRef.current = screen;
                 setScreenSharing(true);
+                getSocket().emit('share-screen', { roomId: meetingCode, sharing: true });
             } catch { /* cancelled */ }
         }
     };
@@ -344,15 +379,47 @@ export default function MeetingRoom() {
         getSocket().emit('send-reaction', { roomId: meetingCode, emoji, userName: user.username });
     };
 
-    // Copy code
-    const copyCode = () => {
-        navigator.clipboard.writeText(meetingCode);
-        setCopied(true); setTimeout(() => setCopied(false), 2000);
+    // Share meeting link (Google Meet style)
+    const meetingLink = () => {
+        if (typeof window === 'undefined') return '';
+        return `${window.location.origin}/meeting/${meetingCode}`;
+    };
+    const shareMeeting = async () => {
+        const link = meetingLink();
+        try {
+            if (navigator.share) {
+                await navigator.share({
+                    title: meetingTitle || 'StreamSphere meeting',
+                    text: `Join my StreamSphere meeting: ${link}`,
+                    url: link,
+                });
+                return;
+            }
+        } catch { /* user cancelled share sheet */ }
+        try {
+            await navigator.clipboard.writeText(link);
+            setCopied(true); setTimeout(() => setCopied(false), 2000);
+        } catch { /* clipboard unavailable */ }
     };
 
     // Pin/Unpin
     const togglePin = (id: string) => {
         setPinnedId(prev => prev === id ? null : id);
+    };
+
+    // Panels — only one open at a time, Google Meet style
+    const toggleChat = () => {
+        setPeopleOpen(false);
+        setReactionOpen(false);
+        setChatOpen(prev => !prev);
+    };
+    const togglePeople = () => {
+        setChatOpen(false);
+        setReactionOpen(false);
+        setPeopleOpen(prev => !prev);
+    };
+    const toggleReactionMenu = () => {
+        setReactionOpen(prev => !prev);
     };
 
     const handleLeave = () => router.push('/dashboard');
@@ -403,7 +470,7 @@ export default function MeetingRoom() {
             )}
             {/* Pin button — only in grid mode, not filmstrip */}
             {opts.showPin && !opts.inFilmstrip && (
-                <button
+                <button type="button"
                     className={`pin-btn ${pinnedId === id ? 'is-pinned' : ''}`}
                     onClick={(e) => { e.stopPropagation(); togglePin(id); }}
                     title={pinnedId === id ? 'Unpin' : 'Pin'}
@@ -427,9 +494,9 @@ export default function MeetingRoom() {
                     <div className="meeting-info">
                         <h2 className="meeting-title">{meetingTitle || 'Meeting'}</h2>
                         <div className="meeting-meta">
-                            <button className="meeting-code-chip" onClick={copyCode} title="Click to copy">
-                                <span className="icon icon-sm">{copied ? 'check' : 'content_copy'}</span>
-                                {copied ? 'Copied!' : meetingCode}
+                            <button type="button" className="meeting-code-chip" onClick={shareMeeting} title="Share meeting link">
+                                <span className="icon icon-sm">{copied ? 'check' : 'link'}</span>
+                                {copied ? 'Link copied!' : meetingCode}
                             </button>
                             <span>•</span>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -444,9 +511,9 @@ export default function MeetingRoom() {
                         </div>
                     </div>
                     <div className="topbar-actions">
-                        <button className="btn-danger" onClick={handleLeave}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span className="icon icon-sm">call_end</span> Leave
+                        <button type="button" className="btn-secondary" onClick={shareMeeting}
+                            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', minHeight: 40 }}>
+                            <span className="icon icon-sm">ios_share</span> Share
                         </button>
                     </div>
                 </div>
@@ -460,11 +527,14 @@ export default function MeetingRoom() {
                             <div className="spotlight-main">
                                 {pinnedId === 'self' ? (
                                     <>
-                                        {videoEnabled ? (
+                                        {(videoEnabled || screenSharing) ? (
                                             <video
-                                                ref={spotlightVideoRef}
                                                 autoPlay muted playsInline
                                                 style={{ transform: 'scaleX(-1)' }}
+                                                ref={(el) => {
+                                                    spotlightVideoRef.current = el;
+                                                    if (el && localStream) el.srcObject = localStream;
+                                                }}
                                             />
                                         ) : (
                                             <div className="avatar-placeholder">
@@ -481,10 +551,13 @@ export default function MeetingRoom() {
                                     </>
                                 ) : pinnedPeer ? (
                                     <>
-                                        {pinnedPeer.stream ? (
+                                        {pinnedPeer.stream && (pinnedPeer.videoEnabled !== false || pinnedPeer.screenSharing) ? (
                                             <video
-                                                ref={spotlightVideoRef}
                                                 autoPlay playsInline
+                                                ref={(el) => {
+                                                    spotlightVideoRef.current = el;
+                                                    if (el && pinnedPeer.stream) el.srcObject = pinnedPeer.stream;
+                                                }}
                                             />
                                         ) : (
                                             <div className="avatar-placeholder">
@@ -507,7 +580,7 @@ export default function MeetingRoom() {
                                 </div>
 
                                 {/* Unpin button */}
-                                <button className="unpin-btn" onClick={() => setPinnedId(null)}>
+                                <button type="button" className="unpin-btn" onClick={() => setPinnedId(null)}>
                                     <span className="icon">close</span> Unpin
                                 </button>
                             </div>
@@ -517,7 +590,7 @@ export default function MeetingRoom() {
                                 {/* Self tile in filmstrip (if not pinned) */}
                                 {pinnedId !== 'self' && (
                                     <div className="video-tile is-self" onClick={() => togglePin('self')}>
-                                        {videoEnabled && localStream ? (
+                                        {(videoEnabled || screenSharing) && localStream ? (
                                             <video
                                                 autoPlay muted playsInline
                                                 style={{ transform: 'scaleX(-1)' }}
@@ -541,7 +614,7 @@ export default function MeetingRoom() {
                                     .map(peer => (
                                         <div key={peer.socketId} className="video-tile"
                                             onClick={() => togglePin(peer.socketId)}>
-                                            {peer.stream && peer.videoEnabled !== false ? (
+                                            {peer.stream && (peer.videoEnabled !== false || peer.screenSharing) ? (
                                                 <video
                                                     autoPlay playsInline
                                                     ref={(el) => { if (el && peer.stream) el.srcObject = peer.stream; }}
@@ -572,15 +645,18 @@ export default function MeetingRoom() {
                                 {!hasRemotePeers && (
                                     <div className="video-tile">
                                         <video
-                                            ref={localVideoRef}
                                             autoPlay muted playsInline
                                             style={{
                                                 width: '100%', height: '100%', objectFit: 'cover',
                                                 transform: 'scaleX(-1)',
-                                                display: videoEnabled ? 'block' : 'none',
+                                                display: (videoEnabled || screenSharing) ? 'block' : 'none',
+                                            }}
+                                            ref={(el) => {
+                                                localVideoRef.current = el;
+                                                if (el && localStream) el.srcObject = localStream;
                                             }}
                                         />
-                                        {!videoEnabled && (
+                                        {!videoEnabled && !screenSharing && (
                                             <div className="avatar-placeholder">
                                                 <div className="avatar-circle"
                                                     style={{ background: getAvatarColor(user.username) }}>
@@ -603,7 +679,7 @@ export default function MeetingRoom() {
                                 {/* Remote peers in grid */}
                                 {remotePeerArray.map((peer) => (
                                     <div key={peer.socketId} className="video-tile">
-                                        {peer.stream && peer.videoEnabled !== false ? (
+                                        {peer.stream && (peer.videoEnabled !== false || peer.screenSharing) ? (
                                             <video
                                                 autoPlay playsInline
                                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -627,7 +703,7 @@ export default function MeetingRoom() {
                                             </div>
                                         )}
                                         {/* Pin button */}
-                                        <button
+                                        <button type="button"
                                             className="pin-btn"
                                             onClick={() => togglePin(peer.socketId)}
                                             title="Pin this video"
@@ -642,8 +718,14 @@ export default function MeetingRoom() {
                             {/* Self PiP — only when others are present */}
                             {hasRemotePeers && (
                                 <div className="self-view-pip" onClick={() => togglePin('self')}>
-                                    {videoEnabled ? (
-                                        <video ref={pipVideoRef} autoPlay muted playsInline />
+                                    {(videoEnabled || screenSharing) ? (
+                                        <video
+                                            autoPlay muted playsInline
+                                            ref={(el) => {
+                                                pipVideoRef.current = el;
+                                                if (el && localStream) el.srcObject = localStream;
+                                            }}
+                                        />
                                     ) : (
                                         <div className="avatar-placeholder">
                                             <div className="avatar-circle"
@@ -661,43 +743,63 @@ export default function MeetingRoom() {
 
                 {/* Controls bar */}
                 <div className="controls-bar">
-                    <button className={`ctrl-btn ${!audioEnabled ? 'off' : ''}`}
-                        onClick={handleToggleAudio} aria-label={audioEnabled ? 'Mute' : 'Unmute'}>
-                        <span className="icon">{audioEnabled ? 'mic' : 'mic_off'}</span>
-                        <span className="label">{audioEnabled ? 'Mic' : 'Muted'}</span>
-                    </button>
-                    <button className={`ctrl-btn ${!videoEnabled ? 'off' : ''}`}
-                        onClick={handleToggleVideo} aria-label={videoEnabled ? 'Camera off' : 'Camera on'}>
-                        <span className="icon">{videoEnabled ? 'videocam' : 'videocam_off'}</span>
-                        <span className="label">{videoEnabled ? 'Video' : 'Off'}</span>
-                    </button>
-                    <button className={`ctrl-btn ${screenSharing ? 'active-feature' : ''}`}
-                        onClick={handleScreenShare} aria-label="Screen share">
-                        <span className="icon">{screenSharing ? 'stop_screen_share' : 'present_to_all'}</span>
-                        <span className="label">Present</span>
-                    </button>
-                    <button className={`ctrl-btn ${chatOpen ? 'active-feature' : ''}`}
-                        onClick={() => setChatOpen(!chatOpen)} aria-label="Chat">
-                        <span className="icon">chat</span>
-                        <span className="label">Chat</span>
-                        {unreadCount > 0 && !chatOpen && (
-                            <span className="badge">{unreadCount > 9 ? '9+' : unreadCount}</span>
-                        )}
-                    </button>
-                    <div className="reaction-picker">
-                        {QUICK_REACTIONS.map(emoji => (
-                            <button key={emoji} className="ctrl-btn reaction-btn"
-                                onClick={() => sendReaction(emoji)}
-                                aria-label={`Send reaction ${emoji}`} title={`React ${emoji}`}>
-                                <span className="label">{emoji}</span>
+                    <div className="controls-main">
+                        <button type="button" className={`ctrl-btn ${!audioEnabled ? 'off' : ''}`}
+                            onClick={handleToggleAudio} aria-label={audioEnabled ? 'Mute' : 'Unmute'}>
+                            <span className="icon">{audioEnabled ? 'mic' : 'mic_off'}</span>
+                            <span className="label">{audioEnabled ? 'Mic' : 'Muted'}</span>
+                        </button>
+                        <button type="button" className={`ctrl-btn ${!videoEnabled ? 'off' : ''}`}
+                            onClick={handleToggleVideo} aria-label={videoEnabled ? 'Camera off' : 'Camera on'}>
+                            <span className="icon">{videoEnabled ? 'videocam' : 'videocam_off'}</span>
+                            <span className="label">{videoEnabled ? 'Video' : 'Off'}</span>
+                        </button>
+                        <button type="button" className={`ctrl-btn present-btn ${screenSharing ? 'active-feature' : ''}`}
+                            onClick={handleScreenShare} aria-label="Screen share">
+                            <span className="icon">{screenSharing ? 'stop_screen_share' : 'present_to_all'}</span>
+                            <span className="label">Present</span>
+                        </button>
+                        {/* Reactions — popover menu */}
+                        <div className="reaction-wrap">
+                            <button type="button" className={`ctrl-btn ${reactionOpen ? 'active-feature' : ''}`}
+                                onClick={toggleReactionMenu} aria-label="Reactions">
+                                <span className="icon">emoji_emotions</span>
+                                <span className="label">React</span>
                             </button>
-                        ))}
+                            {reactionOpen && (
+                                <div className="reaction-menu">
+                                    {QUICK_REACTIONS.map(emoji => (
+                                        <button type="button" key={emoji} className="reaction-menu-item"
+                                            onClick={() => { sendReaction(emoji); setReactionOpen(false); }}
+                                            aria-label={`Send reaction ${emoji}`} title={emoji}>
+                                            {emoji}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        {/* People */}
+                        <button type="button" className={`ctrl-btn ${peopleOpen ? 'active-feature' : ''}`}
+                            onClick={togglePeople} aria-label="People">
+                            <span className="icon">group</span>
+                            <span className="label">People</span>
+                            <span className="badge">{participantCount}</span>
+                        </button>
+                        {/* Chat */}
+                        <button type="button" className={`ctrl-btn ${chatOpen ? 'active-feature' : ''}`}
+                            onClick={toggleChat} aria-label="Chat">
+                            <span className="icon">chat</span>
+                            <span className="label">Chat</span>
+                            {unreadCount > 0 && !chatOpen && (
+                                <span className="badge">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                            )}
+                        </button>
+                        <button type="button" className="ctrl-btn share-btn" onClick={shareMeeting} aria-label="Share meeting link">
+                            <span className="icon">{copied ? 'check' : 'ios_share'}</span>
+                            <span className="label">{copied ? 'Copied' : 'Share'}</span>
+                        </button>
                     </div>
-                    <button className="ctrl-btn" onClick={copyCode} aria-label="Copy code">
-                        <span className="icon">{copied ? 'check' : 'content_copy'}</span>
-                        <span className="label">{copied ? 'Copied' : 'Copy'}</span>
-                    </button>
-                    <button className="ctrl-btn end-call" onClick={handleLeave} aria-label="Leave">
+                    <button type="button" className="ctrl-btn end-call" onClick={handleLeave} aria-label="Leave">
                         <span className="icon">call_end</span>
                         <span className="label">Leave</span>
                     </button>
@@ -711,7 +813,7 @@ export default function MeetingRoom() {
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span className="icon">chat</span> In-call messages
                         </span>
-                        <button className="chat-close-btn" onClick={() => setChatOpen(false)} aria-label="Close chat">
+                        <button type="button" className="chat-close-btn" onClick={() => setChatOpen(false)} aria-label="Close chat">
                             <span className="icon">close</span>
                         </button>
                     </div>
@@ -736,14 +838,77 @@ export default function MeetingRoom() {
                     <div className="chat-input-area">
                         <input className="input-field" placeholder="Send a message..."
                             value={chatInput} onChange={(e) => setChatInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    sendMessage();
+                                }
+                            }}
                             style={{ flex: 1, padding: '10px 14px' }}
                         />
-                        <button className="ctrl-btn active-feature" onClick={sendMessage}
+                        <button type="button" className="ctrl-btn active-feature" onClick={sendMessage}
                             disabled={!chatInput.trim()} aria-label="Send"
                             style={{ width: 44, height: 44, borderRadius: 12, opacity: chatInput.trim() ? 1 : 0.4 }}>
                             <span className="icon">send</span>
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* People panel */}
+            {peopleOpen && (
+                <div className="chat-panel people-panel fade-in">
+                    <div className="chat-header">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span className="icon">group</span> People
+                        </span>
+                        <button type="button" className="chat-close-btn" onClick={() => setPeopleOpen(false)} aria-label="Close people panel">
+                            <span className="icon">close</span>
+                        </button>
+                    </div>
+
+                    <div className="people-invite">
+                        <span className="people-invite-label">Invite people</span>
+                        <div className="people-invite-row">
+                            <code className="people-code" title={meetingLink()}>{meetingLink()}</code>
+                            <button type="button" className="btn-secondary" onClick={shareMeeting}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', minHeight: 36 }}>
+                                <span className="icon" style={{ fontSize: 16 }}>{copied ? 'check' : 'link'}</span>
+                                {copied ? 'Copied' : 'Copy link'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="people-list">
+                        <div className="people-section-title">In this call ({participantCount})</div>
+
+                        <div className="people-item">
+                            <div className="people-avatar" style={{ background: getAvatarColor(user.username) }}>
+                                {user.username[0].toUpperCase()}
+                            </div>
+                            <div className="people-info">
+                                <span className="people-name">{user.username} (You)</span>
+                                {hostId === user.id && <span className="people-role">Host</span>}
+                            </div>
+                            <span className={`people-media ${audioEnabled ? '' : 'muted'}`}>
+                                <span className="icon">{audioEnabled ? 'mic' : 'mic_off'}</span>
+                            </span>
+                        </div>
+
+                        {remotePeerArray.map(peer => (
+                            <div key={peer.socketId} className="people-item">
+                                <div className="people-avatar" style={{ background: getAvatarColor(peer.userName || '?') }}>
+                                    {(peer.userName || '?')[0].toUpperCase()}
+                                </div>
+                                <div className="people-info">
+                                    <span className="people-name">{peer.userName || 'Connecting...'}</span>
+                                    {hostId === peer.userId && <span className="people-role">Host</span>}
+                                </div>
+                                <span className={`people-media ${peer.audioEnabled === false ? 'muted' : ''}`}>
+                                    <span className="icon">{peer.audioEnabled === false ? 'mic_off' : 'mic'}</span>
+                                </span>
+                            </div>
+                        ))}
                     </div>
                 </div>
             )}
