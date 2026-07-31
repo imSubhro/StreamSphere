@@ -6,7 +6,10 @@ function initializeMeetingSocket(io) {
 
         // Join meeting room
         socket.on('join-room', ({ roomId, userId, userName }) => {
-            console.log(`User ${userName} (${userId}) joining room ${roomId}`);
+            // Prefer server-verified identity from the JWT over client-supplied values
+            const uid = socket.user?.id || userId;
+            const uname = socket.user?.username || userName;
+            console.log(`User ${uname} (${uid}) joining room ${roomId}`);
             socket.join(roomId);
 
             if (!roomParticipants[roomId]) {
@@ -15,7 +18,7 @@ function initializeMeetingSocket(io) {
             roomParticipants[roomId].add(socket.id);
 
             // Store user info on socket for disconnect handling
-            socket.userData = { roomId, userId, userName };
+            socket.userData = { roomId, userId: uid, userName: uname };
 
             // Tell new user about existing participants
             const existing = Array.from(roomParticipants[roomId]).filter(id => id !== socket.id);
@@ -24,8 +27,8 @@ function initializeMeetingSocket(io) {
             // Tell others about new user
             socket.to(roomId).emit('user-joined', {
                 socketId: socket.id,
-                userId,
-                userName,
+                userId: uid,
+                userName: uname,
             });
 
             // Broadcast participant count

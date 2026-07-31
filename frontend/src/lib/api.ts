@@ -1,28 +1,5 @@
 import axios from 'axios';
-
-// Dynamically determine API URL based on environment
-const getApiUrl = (): string => {
-    // Use env var if explicitly set
-    if (process.env.NEXT_PUBLIC_API_URL) {
-        return process.env.NEXT_PUBLIC_API_URL;
-    }
-
-    // In browser, check if we're on production
-    if (typeof window !== 'undefined') {
-        const { hostname } = window.location;
-
-        // Local development
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-            return 'http://localhost:5000/api';
-        }
-
-        // Production: use the backend URL from env or default
-        return process.env.NEXT_PUBLIC_API_URL || 'https://stream-jp3e.vercel.app/api';
-    }
-
-    // SSR fallback
-    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
-};
+import { getApiUrl } from './config';
 
 const API_URL = getApiUrl();
 
@@ -101,4 +78,9 @@ export async function leaveMeetingAPI(code: string) {
     } catch {
         return { success: false };
     }
+}
+
+export async function getMeetingMessages(code: string) {
+    const res = await apiClient.get(`/meetings/${code}/messages`);
+    return res.data;
 }

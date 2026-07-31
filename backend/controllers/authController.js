@@ -2,8 +2,9 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
+const { getJwtSecret } = require('../config/secrets');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
+const JWT_SECRET = getJwtSecret();
 const JWT_EXPIRY = '7d';
 
 function generateToken(payload) {

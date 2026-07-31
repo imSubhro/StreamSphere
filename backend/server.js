@@ -3,6 +3,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const { getJwtSecret } = require('./config/secrets');
 require('dotenv').config();
 
 // Route imports
@@ -24,6 +26,7 @@ const getAllowedOrigins = () => {
     const origins = [
         'http://localhost:3000',
         'http://127.0.0.1:3000',
+        'https://streamsphere-iota.vercel.app',
     ];
     
     // Add FRONTEND_URL from env (can be comma-separated for multiple)
@@ -33,20 +36,18 @@ const getAllowedOrigins = () => {
         });
     }
     
-    return origins.filter(Boolean);
+    return [...new Set(origins.filter(Boolean))];
 };
 
-// CORS callback for dynamic origin checking
+// CORS callback for explicit origin checking
 const corsCallback = (origin, callback) => {
     const allowedOrigins = getAllowedOrigins();
     
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
     
-    // Allow if origin matches or if it's a Vercel preview deployment
-    if (allowedOrigins.includes(origin) || 
-        origin.endsWith('.vercel.app') || 
-        origin.endsWith('.netlify.app')) {
+    // Allow only explicitly listed origins
+    if (allowedOrigins.includes(origin)) {
         return callback(null, true);
     }
     
@@ -62,6 +63,22 @@ const io = new Server(server, {
         methods: ['GET', 'POST'],
         credentials: true,
     },
+});
+
+// Socket.IO authentication — require valid JWT to connect
+const JWT_SECRET = getJwtSecret();
+io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) {
+        return next(new Error('Authentication required'));
+    }
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        socket.user = decoded;
+        next();
+    } catch {
+        next(new Error('Invalid or expired token'));
+    }
 });
 
 // Express Middleware

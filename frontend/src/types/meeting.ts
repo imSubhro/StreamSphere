@@ -37,3 +37,15 @@ export interface ChatMessage {
     message: string;
     timestamp: string;
 }
+
+export interface PersistedChatMessage {
+    id: string;
+    user_id: string;
+    message: string;
+    created_at: string;
+    user?: {
+        id: string;
+        username: string;
+        avatar_url?: string;
+    };
+}

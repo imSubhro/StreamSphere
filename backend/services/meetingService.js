@@ -132,11 +132,26 @@ async function saveChatMessage(meetingId, userId, message) {
     return result.rows[0];
 }
 
+async function getChatMessages(meetingId) {
+    const result = await db.query(
+        `SELECT cm.id, cm.user_id, cm.message, cm.created_at,
+                json_build_object('id', u.id, 'username', u.username, 'avatar_url', u.avatar_url) as user
+         FROM chat_messages cm
+         JOIN users u ON cm.user_id = u.id
+         WHERE cm.meeting_id = $1
+         ORDER BY cm.created_at ASC
+         LIMIT 200`,
+        [meetingId]
+    );
+    return result.rows;
+}
+
 module.exports = {
     createMeeting,
     getMeetingByCode,
     listUserMeetings,
     joinMeeting,
     leaveMeeting,
-    saveChatMessage
+    saveChatMessage,
+    getChatMessages
 };

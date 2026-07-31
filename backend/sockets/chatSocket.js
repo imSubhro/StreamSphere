@@ -6,14 +6,17 @@ function initializeChatSocket(io) {
         // Send chat message — persists to DB
         socket.on('send-message', async ({ roomId, userId, userName, message }) => {
             try {
-                console.log(`Chat: ${userName} in room ${roomId}`);
+                // Prefer server-verified identity from the JWT over client-supplied values
+                const uid = socket.user?.id || userId;
+                const uname = socket.user?.username || userName;
+                console.log(`Chat: ${uname} in room ${roomId}`);
 
                 // Try to save to DB (gracefully handle DB errors)
                 let savedMsg = null;
                 try {
                     const meeting = await meetingService.getMeetingByCode(roomId);
                     if (meeting) {
-                        savedMsg = await meetingService.saveChatMessage(meeting.id, userId, message);
+                        savedMsg = await meetingService.saveChatMessage(meeting.id, uid, message);
                     }
                 } catch (dbErr) {
                     console.warn('Could not persist chat message:', dbErr.message);
@@ -22,8 +25,8 @@ function initializeChatSocket(io) {
                 // Broadcast to all participants regardless of DB status
                 io.to(roomId).emit('new-message', {
                     id: savedMsg?.id || Date.now().toString(),
-                    userId,
-                    userName,
+                    userId: uid,
+                    userName: uname,
                     message,
                     timestamp: savedMsg?.created_at || new Date().toISOString(),
                 });

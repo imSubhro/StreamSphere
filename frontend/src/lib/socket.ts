@@ -1,14 +1,19 @@
 import io, { Socket } from 'socket.io-client';
-
-const WS_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'https://stream-jp3e.vercel.app';
+import { getSocketUrl } from './config';
 
 let socket: Socket | null = null;
 
 export function getSocket(): Socket {
     if (!socket) {
-        socket = io(WS_URL, {
+        let token: string | null = null;
+        if (typeof window !== 'undefined') {
+            token = localStorage.getItem('token');
+        }
+
+        socket = io(getSocketUrl(), {
             autoConnect: false,
             transports: ['websocket', 'polling'],
+            auth: token ? { token } : undefined,
         });
 
         socket.on('connect', () => console.log('Socket connected:', socket?.id));

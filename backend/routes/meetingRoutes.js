@@ -8,6 +8,7 @@ router.use(authMiddleware);
 
 router.post('/', meetingController.createMeeting);
 router.get('/', meetingController.listMeetings);
+router.get('/:code/messages', meetingController.getMessages);
 router.get('/:code', meetingController.getMeeting);
 router.post('/:code/join', meetingController.joinMeeting);
 router.post('/:code/leave', meetingController.leaveMeeting);

@@ -1,21 +1,31 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '@/context/AuthContext';
-import { joinMeetingAPI, leaveMeetingAPI, getMeeting } from '@/lib/api';
+import { joinMeetingAPI, leaveMeetingAPI, getMeeting, getMeetingMessages } from '@/lib/api';
 import { getSocket, connectSocket, disconnectSocket } from '@/lib/socket';
 import { getLocalStream, stopMediaStream, toggleAudio, toggleVideo, getScreenStream } from '@/lib/webrtc/MediaDevices';
 import {
     createPeerConnection, createOffer, handleOffer, handleAnswer,
     handleIceCandidate, addStreamToPeer, PeerCallbacks,
 } from '@/lib/webrtc/PeerConnection';
-import { ChatMessage } from '@/types/meeting';
+import { ChatMessage, PersistedChatMessage } from '@/types/meeting';
 
 interface RemotePeer {
     socketId: string;
     userName: string;
     stream: MediaStream | null;
     pc: RTCPeerConnection;
+    audioEnabled: boolean;
+    videoEnabled: boolean;
 }
+
+interface Reaction {
+    id: number;
+    emoji: string;
+    userName: string;
+}
+
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👏'];
 
 // Deterministic avatar colors
 const AVATAR_COLORS = [
@@ -50,6 +60,7 @@ export default function MeetingRoom() {
     const [screenSharing, setScreenSharing] = useState(false);
     const [copied, setCopied] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [reactions, setReactions] = useState<Reaction[]>([]);
     // Pin state: 'self' for own video, socketId for remote, null for grid mode
     const [pinnedId, setPinnedId] = useState<string | null>(null);
 
@@ -123,6 +134,19 @@ export default function MeetingRoom() {
 
             try { await joinMeetingAPI(meetingCode); } catch { /* DB might be down */ }
 
+            // Load persisted chat history
+            try {
+                const msgData = await getMeetingMessages(meetingCode);
+                const history: ChatMessage[] = (msgData.messages || []).map((m: PersistedChatMessage) => ({
+                    id: m.id,
+                    userId: m.user_id,
+                    userName: m.user?.username || 'User',
+                    message: m.message,
+                    timestamp: m.created_at,
+                }));
+                if (isMounted) setMessages(history);
+            } catch { /* history unavailable — start fresh */ }
+
             let stream: MediaStream;
             try {
                 stream = await getLocalStream();
@@ -155,7 +179,7 @@ export default function MeetingRoom() {
                     const callbacks = makePeerCallbacks();
                     const pc = createPeerConnection(socketId, callbacks);
                     addStreamToPeer(pc, localStreamRef.current!);
-                    const peer: RemotePeer = { socketId, userName: '', stream: null, pc };
+                    const peer: RemotePeer = { socketId, userName: '', stream: null, pc, audioEnabled: true, videoEnabled: true };
                     peersRef.current.set(socketId, peer);
                     setRemotePeers(new Map(peersRef.current));
                     const offer = await createOffer(pc);
@@ -167,7 +191,7 @@ export default function MeetingRoom() {
                 const callbacks = makePeerCallbacks();
                 const pc = createPeerConnection(socketId, callbacks);
                 addStreamToPeer(pc, localStreamRef.current!);
-                const peer: RemotePeer = { socketId, userName, stream: null, pc };
+                const peer: RemotePeer = { socketId, userName, stream: null, pc, audioEnabled: true, videoEnabled: true };
                 peersRef.current.set(socketId, peer);
                 setRemotePeers(new Map(peersRef.current));
             });
@@ -178,7 +202,7 @@ export default function MeetingRoom() {
                     const callbacks = makePeerCallbacks();
                     const pc = createPeerConnection(from, callbacks);
                     addStreamToPeer(pc, localStreamRef.current!);
-                    peer = { socketId: from, userName, stream: null, pc };
+                    peer = { socketId: from, userName, stream: null, pc, audioEnabled: true, videoEnabled: true };
                     peersRef.current.set(from, peer);
                 }
                 if (userName) peer.userName = userName;
@@ -207,6 +231,31 @@ export default function MeetingRoom() {
             });
 
             socket.on('participant-count', (count: number) => setParticipantCount(count));
+
+            // Remote user media toggle notifications
+            socket.on('user-toggled-media', ({ socketId, type, enabled }) => {
+                setRemotePeers(prev => {
+                    const peer = prev.get(socketId);
+                    if (!peer) return prev;
+                    const next = new Map(prev);
+                    next.set(socketId, {
+                        ...peer,
+                        audioEnabled: type === 'audio' ? enabled : peer.audioEnabled,
+                        videoEnabled: type === 'video' ? enabled : peer.videoEnabled,
+                    });
+                    return next;
+                });
+            });
+
+            // Emoji reactions
+            socket.on('reaction', ({ emoji, userName }) => {
+                const id = Date.now() + Math.random();
+                setReactions(prev => [...prev.slice(-4), { id, emoji, userName }]);
+                setTimeout(() => {
+                    setReactions(prev => prev.filter(r => r.id !== id));
+                }, 2500);
+            });
+
             socket.on('new-message', (msg: ChatMessage) => {
                 setMessages(prev => [...prev, msg]);
                 setChatOpen(prev => { if (!prev) setUnreadCount(c => c + 1); return prev; });
@@ -223,6 +272,7 @@ export default function MeetingRoom() {
             socket.off('offer'); socket.off('answer');
             socket.off('ice-candidate'); socket.off('user-left');
             socket.off('participant-count'); socket.off('new-message');
+            socket.off('user-toggled-media'); socket.off('reaction');
             peersRef.current.forEach(p => p.pc.close());
             peersRef.current.clear();
             if (localStreamRef.current) stopMediaStream(localStreamRef.current);
@@ -286,6 +336,12 @@ export default function MeetingRoom() {
             roomId: meetingCode, userId: user.id, userName: user.username, message: msg,
         });
         setChatInput('');
+    };
+
+    // Emoji reactions
+    const sendReaction = (emoji: string) => {
+        if (!user) return;
+        getSocket().emit('send-reaction', { roomId: meetingCode, emoji, userName: user.username });
     };
 
     // Copy code
@@ -485,7 +541,7 @@ export default function MeetingRoom() {
                                     .map(peer => (
                                         <div key={peer.socketId} className="video-tile"
                                             onClick={() => togglePin(peer.socketId)}>
-                                            {peer.stream ? (
+                                            {peer.stream && peer.videoEnabled !== false ? (
                                                 <video
                                                     autoPlay playsInline
                                                     ref={(el) => { if (el && peer.stream) el.srcObject = peer.stream; }}
@@ -496,6 +552,11 @@ export default function MeetingRoom() {
                                                         style={{ background: getAvatarColor(peer.userName || '?') }}>
                                                         {(peer.userName || '?')[0].toUpperCase()}
                                                     </div>
+                                                </div>
+                                            )}
+                                            {peer.audioEnabled === false && (
+                                                <div className="muted-indicator">
+                                                    <span className="icon">mic_off</span>
                                                 </div>
                                             )}
                                             <div className="name-tag">{peer.userName || '...'}</div>
@@ -542,7 +603,7 @@ export default function MeetingRoom() {
                                 {/* Remote peers in grid */}
                                 {remotePeerArray.map((peer) => (
                                     <div key={peer.socketId} className="video-tile">
-                                        {peer.stream ? (
+                                        {peer.stream && peer.videoEnabled !== false ? (
                                             <video
                                                 autoPlay playsInline
                                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -560,6 +621,11 @@ export default function MeetingRoom() {
                                             <span className="icon">person</span>
                                             {peer.userName || 'Connecting...'}
                                         </div>
+                                        {peer.audioEnabled === false && (
+                                            <div className="muted-indicator">
+                                                <span className="icon">mic_off</span>
+                                            </div>
+                                        )}
                                         {/* Pin button */}
                                         <button
                                             className="pin-btn"
@@ -618,6 +684,15 @@ export default function MeetingRoom() {
                             <span className="badge">{unreadCount > 9 ? '9+' : unreadCount}</span>
                         )}
                     </button>
+                    <div className="reaction-picker">
+                        {QUICK_REACTIONS.map(emoji => (
+                            <button key={emoji} className="ctrl-btn reaction-btn"
+                                onClick={() => sendReaction(emoji)}
+                                aria-label={`Send reaction ${emoji}`} title={`React ${emoji}`}>
+                                <span className="label">{emoji}</span>
+                            </button>
+                        ))}
+                    </div>
                     <button className="ctrl-btn" onClick={copyCode} aria-label="Copy code">
                         <span className="icon">{copied ? 'check' : 'content_copy'}</span>
                         <span className="label">{copied ? 'Copied' : 'Copy'}</span>
@@ -670,6 +745,18 @@ export default function MeetingRoom() {
                             <span className="icon">send</span>
                         </button>
                     </div>
+                </div>
+            )}
+
+            {/* Reaction overlay */}
+            {reactions.length > 0 && (
+                <div className="reaction-overlay" aria-live="polite">
+                    {reactions.map(r => (
+                        <span key={r.id} className="reaction-float">
+                            {r.emoji}
+                            <span className="reaction-name">{r.userName}</span>
+                        </span>
+                    ))}
                 </div>
             )}
         </div>

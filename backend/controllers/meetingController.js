@@ -77,3 +77,20 @@ exports.leaveMeeting = async (req, res) => {
         res.status(500).json({ error: 'Failed to leave meeting' });
     }
 };
+
+exports.getMessages = async (req, res) => {
+    try {
+        const { code } = req.params;
+
+        const meeting = await meetingService.getMeetingByCode(code);
+        if (!meeting) {
+            return res.status(404).json({ error: 'Meeting not found' });
+        }
+
+        const messages = await meetingService.getChatMessages(meeting.id);
+        res.json({ messages });
+    } catch (err) {
+        console.error('Get messages error:', err.message);
+        res.status(500).json({ error: 'Failed to get messages' });
+    }
+};
